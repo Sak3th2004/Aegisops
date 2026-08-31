@@ -5,8 +5,10 @@ sse-starlette==2.2.1
 python-multipart==0.0.20
 
 # --- Google AI (mandatory per spec) ---
-google-genai==1.9.0
-google-adk==1.2.1
+# Pins loosened so pip resolves a mutually-compatible adk/genai pair. Our code
+# uses genai's Client + types.Part.from_bytes + response_mime_type (>=1.0 API).
+google-adk>=1.0.0
+google-genai>=1.0.0
 
 # --- Config / models ---
 pydantic==2.10.5
