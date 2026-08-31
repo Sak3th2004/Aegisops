@@ -95,8 +95,19 @@ async def post_alert(alert: Alert, request: Request):
 @app.get("/api/health")
 async def health(request: Request):
     s = request.app.state.settings
-    return {"status": "ok", "model": s.gemini_model,
-            "gemini_key_present": s.has_gemini_key, "slack_configured": s.has_slack}
+    return {
+        "status": "ok",
+        "orchestrator": type(request.app.state.orchestrator).__name__,
+        "model": s.gemini_model,
+        "model_pro": s.gemini_model_pro,
+        "auth": "vertex-adc" if s.use_vertex else ("ai-studio-key" if s.has_gemini_key else "none"),
+        "vertex": s.use_vertex,
+        "project": s.google_cloud_project or None,
+        "vertex_location": s.vertex_location if s.use_vertex else None,
+        "compute_location": s.google_cloud_location,
+        "backend": s.backend,
+        "slack_configured": s.has_slack,
+    }
 
 
 @app.get("/api/registry")
