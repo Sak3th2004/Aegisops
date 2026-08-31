@@ -16,13 +16,17 @@ from backend.services.storage import StorageService
 
 # Ordered rules: first match wins. Each is a real operational signature.
 _CLASS_RULES: list[tuple[str, re.Pattern]] = [
+    ("oom_killed", re.compile(r"oomkilled|out of memory|oom-?kill|exit code 137|killed.*memory", re.I)),
+    ("memory_leak", re.compile(r"memory leak|heap (usage|growth)|old gen|gc pause|rss (growth|climbing)", re.I)),
     ("db_pool_exhaustion", re.compile(r"pool.*(exhaust|not available)|connection pool|hikari", re.I)),
+    ("thread_pool_saturation", re.compile(r"thread pool|worker pool|queue depth|no available (threads|workers)|saturat", re.I)),
     ("downstream_timeout", re.compile(r"(504|gateway timeout|downstream|upstream).*(timeout|failed)|timeout acquiring", re.I)),
+    ("high_latency", re.compile(r"p99|p95 latency|latency (spike|breach)|slow (query|response)|response time", re.I)),
     ("circuit_breaker", re.compile(r"circuit breaker", re.I)),
     ("null_pointer", re.compile(r"nullpointer|npe|segfault|undefined is not", re.I)),
-    ("slo_breach", re.compile(r"slo|error rate .* exceeds|5xx (error )?rate", re.I)),
+    ("slo_breach", re.compile(r"slo|error rate .* exceeds|5xx (error )?rate|latency slo", re.I)),
     ("connection_leak", re.compile(r"connection leak", re.I)),
-    ("autoscale", re.compile(r"autoscal|added \d+ pods|scaled", re.I)),
+    ("autoscale", re.compile(r"autoscal|added \d+ pods|scaled|restarted pod|pod restart", re.I)),
     ("server_error", re.compile(r"\b5\d\d\b|internal server error|unhandled exception", re.I)),
     ("healthcheck", re.compile(r"healthcheck|degraded", re.I)),
 ]

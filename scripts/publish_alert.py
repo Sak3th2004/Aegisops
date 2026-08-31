@@ -25,16 +25,28 @@ def main() -> int:
     ap.add_argument("--alert", default="HighErrorRate")
     ap.add_argument("--error-rate", default="42%")
     ap.add_argument("--snapshot", default=DEFAULT_SNAPSHOT)
+    ap.add_argument("--scenario", choices=["checkout", "cart", "payments", "rotate"],
+                    help="Use a predefined scenario's alert (overrides --service etc.)")
     ap.add_argument("--pubsub", action="store_true",
                     help="Publish to the real Pub/Sub topic instead of the HTTP endpoint")
     args = ap.parse_args()
 
-    payload = {
-        "alert": args.alert,
-        "service": args.service,
-        "error_rate": args.error_rate,
-        "grafana_snapshot": args.snapshot,
-    }
+    if args.scenario:
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+        from backend.seed.scenarios import BY_KEY, next_scenario
+
+        sc = next_scenario() if args.scenario == "rotate" else BY_KEY[args.scenario]
+        payload = dict(sc.alert)
+    else:
+        payload = {
+            "alert": args.alert,
+            "service": args.service,
+            "error_rate": args.error_rate,
+            "grafana_snapshot": args.snapshot,
+        }
 
     # --- Real Pub/Sub path: publish straight to the topic (proves the cloud
     #     ingestion path triggers an incident, not the in-process shortcut). ---

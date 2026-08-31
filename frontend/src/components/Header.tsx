@@ -1,4 +1,4 @@
-import { Boxes, Clock, Radio, ShieldAlert, Zap } from "lucide-react";
+import { Boxes, Clock, FlaskConical, Radio, ShieldAlert, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Health } from "../api";
 import type { ConnState } from "../useIncidentStream";
@@ -37,6 +37,7 @@ export default function Header({
   health,
   firing,
   onFire,
+  onOpenCustom,
   onOpenRegistry,
 }: {
   state: WarRoomState;
@@ -44,6 +45,7 @@ export default function Header({
   health: Health | null;
   firing: boolean;
   onFire: () => void;
+  onOpenCustom: () => void;
   onOpenRegistry: () => void;
 }) {
   const terminal =
@@ -98,8 +100,11 @@ export default function Header({
           <button onClick={onOpenRegistry} className="btn btn-ghost">
             <Boxes size={15} /> Registry
           </button>
+          <button onClick={onOpenCustom} className="btn btn-ghost">
+            <FlaskConical size={15} /> Custom
+          </button>
           <button onClick={onFire} disabled={firing} className="btn btn-primary">
-            {firing ? <Spinner /> : <Zap size={15} />} Fire demo alert
+            {firing ? <Spinner /> : <Zap size={15} />} Fire Incident
           </button>
         </div>
       </div>

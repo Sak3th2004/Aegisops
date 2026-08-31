@@ -19,17 +19,14 @@ MIN = 60_000
 def deploys_in_window(
     storage: StorageService, service: str, detected_at: int, lookback_min: int = 180
 ) -> list[Deploy]:
-    """All deploys for the service within `lookback_min` before detection.
+    """The affected service's own deploys within `lookback_min` before detection.
 
-    We also pull downstream services' deploys so the agent can consider whether
-    a dependency's change (not the service's own) is the culprit.
+    We score the service's OWN change history: attributing an incident to the
+    affected service's most recent deploy is both correct and avoids blaming an
+    unrelated service that merely happened to ship around the same time.
     """
     window_start = detected_at - lookback_min * MIN
     candidates = storage.deploys_for_service(service)
-    # Include a couple of key downstreams for cross-service correlation.
-    for dep_service in ("payments-svc", "cart-svc", "inventory-svc"):
-        if dep_service != service:
-            candidates += storage.deploys_for_service(dep_service)
     return [d for d in candidates if window_start <= d.deployed_at <= detected_at + 5 * MIN]
 
 

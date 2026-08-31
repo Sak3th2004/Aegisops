@@ -13,7 +13,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -24,9 +24,15 @@ from backend.adk.orchestrator import AdkOrchestrator
 from backend.agents.base import Deps
 from backend.config import SEED_DIR, get_settings
 from backend.guardrails import ApprovalDecision, ApprovalGate
-from backend.models import Alert
+from backend.models import Alert, Deploy, LogLine, now_ms
 from backend.orchestrator import Orchestrator
-from backend.seed.generate_grafana import OUT as GRAFANA_IMG, generate as generate_grafana
+from backend.seed.generate_grafana import (
+    CART_OUT,
+    OUT as GRAFANA_IMG,
+    PAYMENTS_OUT,
+    generate_all as generate_grafana_all,
+)
+from backend.seed.scenarios import next_scenario
 from backend.seed.seed_data import seed_all
 from backend.services.eventbus import InProcessBus
 from backend.services.gemini import gemini
@@ -72,8 +78,8 @@ async def lifespan(app: FastAPI):
         log.info("seeded fixtures")
     else:
         log.info("fixtures already present; skipping seed")
-    if not GRAFANA_IMG.exists():
-        generate_grafana()
+    if not (GRAFANA_IMG.exists() and CART_OUT.exists() and PAYMENTS_OUT.exists()):
+        generate_grafana_all()  # deterministic; renders all three scenario snapshots
 
     gate = ApprovalGate()
     deps = Deps(storage=storage, gemini=gemini, hub=hub, gate=gate)
@@ -120,6 +126,68 @@ async def post_alert(alert: Alert, request: Request):
     """Drop an alert on the event bus (the demo publisher hits this)."""
     await request.app.state.bus.publish(alert)
     return {"accepted": True, "service": alert.service}
+
+
+@app.post("/api/demo/fire")
+async def demo_fire(request: Request):
+    """Fire the NEXT rotating demo scenario (checkout → cart → payments)."""
+    sc = next_scenario()
+    alert = Alert(**sc.alert)
+    await request.app.state.bus.publish(alert)
+    return {"accepted": True, "scenario": sc.key, "service": alert.service, "alert": alert.alert}
+
+
+@app.post("/api/incidents/custom")
+async def custom_incident(
+    request: Request,
+    service: str = Form(...),
+    alert: str = Form("HighErrorRate"),
+    error_rate: str = Form("10%"),
+    logs: str = Form(""),
+    deploy_version: str = Form(""),
+    rollback_target: str = Form(""),
+    image: Optional[UploadFile] = File(None),
+):
+    """Bring-your-own-incident: judges submit their OWN data and the real agents
+    process exactly it — no randomness. Their log lines are ingested and read by
+    the Diagnosis agent, an optional recent deploy feeds Correlation, and an
+    optional dashboard screenshot is read by Gemini vision.
+    """
+    storage = request.app.state.storage
+    now = now_ms()
+
+    # Ingest the judge's log lines (newest last), spaced over the last ~12 min.
+    lines = [ln.strip() for ln in logs.splitlines() if ln.strip()]
+    for i, msg in enumerate(reversed(lines)):
+        lvl = "ERROR" if any(k in msg.lower() for k in ("error", "fail", "timeout", "exception", "5xx", "oom")) \
+            else "WARN" if any(k in msg.lower() for k in ("warn", "degraded", "slow", "retry")) else "INFO"
+        storage.add_log(LogLine(
+            id=f"log_custom_{service}_{now}_{i}", service=service,
+            ts=now - i * 45_000, level=lvl, message=msg,
+        ))
+
+    # Optional: a recent deploy for Correlation to blame (~10 min ago).
+    if deploy_version.strip():
+        storage.add_deploy(Deploy(
+            id=f"dep_custom_{service}_{now}", service=service, version=deploy_version.strip(),
+            deployed_at=now - 10 * 60_000, deployed_by="judge@demo",
+            commit_sha="custom0", rollback_target=(rollback_target.strip() or None),
+        ))
+
+    # Optional: the judge's dashboard screenshot → real Gemini vision.
+    snapshot: Optional[str] = None
+    if image is not None:
+        customs = SEED_DIR / "custom"
+        customs.mkdir(exist_ok=True)
+        ext = ".png" if (image.content_type or "").endswith("png") else ".jpg"
+        dest = customs / f"{service}_{now}{ext}"
+        dest.write_bytes(await image.read())
+        snapshot = str(dest.relative_to(SEED_DIR.parent.parent))
+
+    payload = Alert(alert=alert, service=service, error_rate=error_rate, grafana_snapshot=snapshot)
+    await request.app.state.bus.publish(payload)
+    return {"accepted": True, "service": service, "logs_ingested": len(lines),
+            "deploy": bool(deploy_version.strip()), "vision_image": snapshot is not None}
 
 
 @app.post("/api/pubsub/push")
@@ -199,18 +267,22 @@ async def rca(incident_id: str, request: Request):
 
 @app.get("/api/incidents/{incident_id}/grafana")
 async def grafana(incident_id: str, request: Request):
-    """Serve the exact Grafana image the vision agent analyzed."""
+    """Serve the exact Grafana image THIS incident's vision agent analyzed.
+
+    Each scenario carries its own snapshot; a custom incident may carry none
+    (then 404, and the UI shows a clean 'no snapshot' state) — we never serve a
+    misleading fallback from a different service.
+    """
     inc = request.app.state.storage.get_incident(incident_id)
-    path: Path = GRAFANA_IMG
-    if inc and inc.alert and inc.alert.grafana_snapshot:
-        p = Path(inc.alert.grafana_snapshot)
-        if not p.is_absolute():
-            p = SEED_DIR.parent.parent / p
-        if p.exists():
-            path = p
-    if not path.exists():
+    if not (inc and inc.alert and inc.alert.grafana_snapshot):
+        raise HTTPException(404, "no snapshot for this incident")
+    p = Path(inc.alert.grafana_snapshot)
+    if not p.is_absolute():
+        p = SEED_DIR.parent.parent / p
+    if not p.exists():
         raise HTTPException(404, "snapshot not available")
-    return FileResponse(path, media_type="image/png")
+    media = "image/jpeg" if p.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+    return FileResponse(p, media_type=media)
 
 
 # --------------------------------------------------------------------------- #

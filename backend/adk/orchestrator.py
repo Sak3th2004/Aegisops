@@ -105,6 +105,16 @@ class AdkOrchestrator:
             await self._remediation(rc, agents["Remediation"], capture)
 
             await self._comms(rc, agents["Comms"])
+
+            # Closed-loop learning: persist a resolved incident so future similar
+            # ones (including judge-invented ones) are recalled by the Memory agent.
+            from backend.tools.memory import learn_incident
+            learned = learn_incident(self.deps.storage, incident)
+            if learned is not None:
+                await rc.emit("learned", agent="Memory",
+                              fingerprint_id=learned.fingerprint_id,
+                              times_seen=len(learned.past_incident_ids))
+
             await rc.emit("done", status=incident.status.value)
         except Exception as exc:  # noqa: BLE001 — surface, never hard-crash
             log.exception("ADK incident %s failed", incident.id)
@@ -150,21 +160,32 @@ class AdkOrchestrator:
         parts: list[Any] = [types.Part(text=f"Diagnose the incident on '{alert.service}'. "
                                              "The Grafana dashboard is attached. Alert: "
                                              f"{alert.alert} ({alert.error_rate}).")]
-        # Real multimodal via ADK: attach the actual Grafana PNG to the turn.
+        # Real multimodal via ADK: attach the actual dashboard image to the turn.
+        # Honest: we only claim a vision read when an image was truly attached
+        # (a custom incident may have none → we skip vision rather than fake it).
+        has_image = False
         snap = alert.grafana_snapshot
         if snap:
             p = Path(snap)
             if not p.is_absolute():
                 p = REPO_ROOT / p
             if p.exists():
-                parts.append(types.Part.from_bytes(data=p.read_bytes(), mime_type="image/png"))
+                mime = "image/jpeg" if p.suffix.lower() in (".jpg", ".jpeg") else "image/png"
+                parts.append(types.Part.from_bytes(data=p.read_bytes(), mime_type=mime))
+                has_image = True
+        if not has_image:
+            parts[0] = types.Part(text=parts[0].text.replace(
+                "The Grafana dashboard is attached.",
+                "No dashboard image was provided; diagnose from the logs only and set "
+                'vision_confirmed to null.'))
         text = await self._run_agent(agent, rc.incident.id, parts)
         d = self._json(text)
         logs = capture.get("fetch_and_classify_logs", {})
         vision = {
-            "confirmed": d.get("vision_confirmed"),
-            "observation": d.get("vision_observation", ""),
-            "annotation": d.get("vision_annotation", ""),
+            "confirmed": d.get("vision_confirmed") if has_image else None,
+            "observation": d.get("vision_observation", "") if has_image else "",
+            "annotation": d.get("vision_annotation", "") if has_image else "",
+            "has_image": has_image,
         }
         rc.remember("diagnosis", {
             "summary": d.get("summary", ""),
@@ -177,10 +198,12 @@ class AdkOrchestrator:
             "top_log_lines": logs.get("top_log_lines", []),
         })
         self.deps.storage.save_incident(rc.incident)
-        await rc.emit("vision_result", agent="Diagnosis",
-                      image_url=f"/api/incidents/{rc.incident.id}/grafana",
-                      confirmed=vision["confirmed"], observation=vision["observation"],
-                      annotation=vision["annotation"])
+        # Only surface a vision panel when a real image was read.
+        if has_image:
+            await rc.emit("vision_result", agent="Diagnosis",
+                          image_url=f"/api/incidents/{rc.incident.id}/grafana",
+                          confirmed=vision["confirmed"], observation=vision["observation"],
+                          annotation=vision["annotation"])
         await rc.emit("agent_end", agent="Diagnosis")
 
     async def _correlation(self, rc: RunContext, agent, capture: dict) -> None:
