@@ -1,114 +1,120 @@
 #!/usr/bin/env bash
 # ============================================================================
-# AegisOps → Cloud Run deploy.
+# AegisOps → Cloud Run deploy (full GCP / Vertex path, upgrade spec Phase 6).
 #
-# Builds the single-container image from docker/Dockerfile with Cloud Build
-# (no local Docker daemon needed), pushes it to Artifact Registry, then deploys
-# it to Cloud Run. Runtime secrets (GEMINI_API_KEY / GEMINI_MODEL /
-# SLACK_WEBHOOK_URL) are read from your local .env and injected as env vars at
-# deploy time — they are NEVER baked into the image.
+# Builds the single-container image from docker/Dockerfile with Cloud Build,
+# pushes it to Artifact Registry, deploys to Cloud Run (cost-safe: min 0 /
+# max 2), grants the runtime service account the roles it needs, and wires a
+# Pub/Sub PUSH subscription to the live URL.
 #
-# First-time usage:
-#   1. Install the gcloud CLI:  https://cloud.google.com/sdk/docs/install
-#   2. gcloud auth login
-#   3. gcloud config set project <YOUR_PROJECT_ID>
-#   4. Make sure .env has a valid GEMINI_API_KEY (copy .env.example → .env)
-#   5. ./deploy.sh
+# Auth is Application Default Credentials — NO API key. On Cloud Run the runtime
+# service account provides ADC automatically (Vertex/Firestore/Pub-Sub). Only
+# the optional Slack webhook is read from .env and injected as an env var.
+#
+# Prereqs:  gcloud auth login ; gcloud config set project <ID> ; ./deploy.sh
 # ============================================================================
 set -euo pipefail
 
-# --- Tunables (override via environment) ------------------------------------
-SERVICE="${SERVICE:-aegisops}"          # Cloud Run service name
-REGION="${REGION:-us-central1}"         # deploy + Artifact Registry region
-REPO="${REPO:-aegisops}"                # Artifact Registry repository name
-# ----------------------------------------------------------------------------
+SERVICE="${SERVICE:-aegisops}"
+REGION="${REGION:-us-central1}"          # compute region (Run/AR/Firestore/PubSub)
+REPO="${REPO:-aegisops}"
+VERTEX_LOCATION="${VERTEX_LOCATION:-global}"      # model region (gemini-3.5-flash)
+GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.5-flash}"
+GEMINI_MODEL_PRO="${GEMINI_MODEL_PRO:-gemini-2.5-pro}"
 
-# Run from the repo root regardless of where the script is invoked from, so the
-# Docker build context (the repo root, as docker/Dockerfile expects) is correct.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# --- Load secrets from .env (never committed, never baked into the image) ----
-if [[ ! -f .env ]]; then
-  echo "✗ .env not found. Copy .env.example to .env and set GEMINI_API_KEY." >&2
-  exit 1
+# --- Optional: pull SLACK_WEBHOOK_URL (+ model overrides) from .env ----------
+if [[ -f .env ]]; then
+  set -a; # shellcheck disable=SC1091
+  source .env; set +a
 fi
-set -a                      # export every KEY=VALUE we source
-# shellcheck disable=SC1091
-source .env
-set +a
-
-# --- Validate required config ------------------------------------------------
-if [[ -z "${GEMINI_API_KEY:-}" || "$GEMINI_API_KEY" == *"paste_your"* ]]; then
-  echo "✗ GEMINI_API_KEY is missing or still the placeholder in .env." >&2
-  exit 1
-fi
-GEMINI_MODEL="${GEMINI_MODEL:-gemini-3.5-flash}"
 
 PROJECT="$(gcloud config get-value project 2>/dev/null)"
-if [[ -z "$PROJECT" || "$PROJECT" == "(unset)" ]]; then
-  echo "✗ No gcloud project set.  gcloud config set project <PROJECT_ID>" >&2
-  exit 1
-fi
-
+[[ -z "$PROJECT" || "$PROJECT" == "(unset)" ]] && { echo "Set a project: gcloud config set project <ID>" >&2; exit 1; }
+PROJECT_NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+RUNTIME_SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${REPO}/${SERVICE}:latest"
 
-echo "▶ Project=${PROJECT}  Region=${REGION}  Image=${IMAGE}"
+echo "▶ Project=${PROJECT}  Region=${REGION}  VertexLoc=${VERTEX_LOCATION}  Image=${IMAGE}"
 
-# --- One-time-ish prerequisites (all idempotent) -----------------------------
-# Enable the APIs the build + deploy need.
+# --- Enable APIs (idempotent) ------------------------------------------------
 gcloud services enable \
-  run.googleapis.com \
-  cloudbuild.googleapis.com \
-  artifactregistry.googleapis.com
+  run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com \
+  aiplatform.googleapis.com firestore.googleapis.com pubsub.googleapis.com
 
-# Create the Artifact Registry repo if it doesn't exist yet.
+# --- Grant the runtime/build SA the roles it needs (idempotent) --------------
+# On new GCP projects the compute SA is also the Cloud Build identity, so it
+# needs the build + log roles too (else `builds submit` 403s on the source bucket).
+for ROLE in roles/aiplatform.user roles/datastore.user roles/pubsub.editor \
+            roles/cloudbuild.builds.builder roles/logging.logWriter \
+            roles/artifactregistry.writer roles/storage.admin; do
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member="serviceAccount:${RUNTIME_SA}" --role="$ROLE" \
+    --condition=None >/dev/null
+done
+echo "▶ Waiting 30s for IAM to propagate before build…"
+sleep 30
+
+# --- Artifact Registry repo (idempotent) -------------------------------------
 if ! gcloud artifacts repositories describe "$REPO" --location "$REGION" >/dev/null 2>&1; then
-  echo "▶ Creating Artifact Registry repo '${REPO}' in ${REGION}"
   gcloud artifacts repositories create "$REPO" \
-    --repository-format=docker --location="$REGION" \
-    --description="AegisOps container images"
+    --repository-format=docker --location="$REGION" --description="AegisOps images"
 fi
 
-# --- Build the image from docker/Dockerfile via Cloud Build ------------------
-# Cloud Build's --tag looks for a root Dockerfile, so we drive it with an inline
-# config that points at docker/Dockerfile. The whole repo root is the context.
-CLOUDBUILD_CFG="$(mktemp)"
-trap 'rm -f "$CLOUDBUILD_CFG"' EXIT
+# --- Build the image from docker/Dockerfile (repo root is the context) -------
+CLOUDBUILD_CFG="$(mktemp)"; trap 'rm -f "$CLOUDBUILD_CFG"' EXIT
 cat > "$CLOUDBUILD_CFG" <<YAML
 steps:
   - name: gcr.io/cloud-builders/docker
     args: ["build", "-f", "docker/Dockerfile", "-t", "${IMAGE}", "."]
 images: ["${IMAGE}"]
 YAML
-
 echo "▶ Building image with Cloud Build…"
 gcloud builds submit --config "$CLOUDBUILD_CFG" .
 
-# --- Assemble runtime env vars ----------------------------------------------
-# '^@^' changes the delimiter so a webhook URL containing commas stays intact.
-ENV_VARS="GEMINI_API_KEY=${GEMINI_API_KEY}@GEMINI_MODEL=${GEMINI_MODEL}"
+# --- Runtime env (NO secret keys — ADC handles auth). '^@^' delimiter keeps
+#     any commas in the webhook intact. ----------------------------------------
+ENV_VARS="GOOGLE_GENAI_USE_VERTEXAI=true@GOOGLE_CLOUD_PROJECT=${PROJECT}"
+ENV_VARS="${ENV_VARS}@GOOGLE_CLOUD_LOCATION=${REGION}@VERTEX_LOCATION=${VERTEX_LOCATION}"
+ENV_VARS="${ENV_VARS}@GEMINI_MODEL=${GEMINI_MODEL}@GEMINI_MODEL_PRO=${GEMINI_MODEL_PRO}"
+ENV_VARS="${ENV_VARS}@BACKEND=cloud@ORCHESTRATOR=adk@PUBSUB_MODE=push"
 if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
   ENV_VARS="${ENV_VARS}@SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL}"
 fi
 
-# --- Deploy to Cloud Run -----------------------------------------------------
-# --allow-unauthenticated makes the war room publicly reachable (demo).
-# --port 8080 matches the container's uvicorn port.
+# --- Deploy to Cloud Run (cost-safe: min 0 / max 2) --------------------------
 echo "▶ Deploying '${SERVICE}' to Cloud Run…"
+# --no-cpu-throttling + --min-instances 1: the incident pipeline runs partly as
+# a background task after the Pub/Sub push returns 204 and blocks on the human
+# approval gate — both need CPU allocated outside request handling. Max 2 caps cost.
 gcloud run deploy "$SERVICE" \
-  --image "$IMAGE" \
-  --region "$REGION" \
-  --allow-unauthenticated \
-  --port 8080 \
+  --image "$IMAGE" --region "$REGION" \
+  --service-account "$RUNTIME_SA" \
+  --allow-unauthenticated --port 8080 \
+  --min-instances 1 --max-instances 2 \
+  --no-cpu-throttling \
+  --cpu 1 --memory 1Gi --timeout 300 \
   --set-env-vars "^@^${ENV_VARS}"
 
-# --- Report ------------------------------------------------------------------
-URL="$(gcloud run services describe "$SERVICE" --region "$REGION" \
-        --format='value(status.url)')"
+URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)')"
+
+# --- Wire a Pub/Sub PUSH subscription to the live URL ------------------------
+gcloud pubsub topics create incident-alerts >/dev/null 2>&1 || true
+PUSH_EP="${URL}/api/pubsub/push"
+if gcloud pubsub subscriptions describe aegisops-push >/dev/null 2>&1; then
+  gcloud pubsub subscriptions modify-push-config aegisops-push --push-endpoint="$PUSH_EP"
+else
+  gcloud pubsub subscriptions create aegisops-push \
+    --topic incident-alerts --push-endpoint="$PUSH_EP" --ack-deadline=60
+fi
+
 echo "✓ Deployed."
 echo "  War room:      ${URL}"
-echo "  Health check:  ${URL}/api/health"
+echo "  Health:        ${URL}/api/health"
+echo "  Pub/Sub push:  ${PUSH_EP}"
 echo
 echo "Fire the demo against the live service:"
-echo "  python scripts/publish_alert.py --url ${URL}"
+echo "  python scripts/publish_alert.py --url ${URL}          # via HTTP"
+echo "  python scripts/publish_alert.py --pubsub              # via real Pub/Sub → push"

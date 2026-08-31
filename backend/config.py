@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # --- Backend selection (never delete local impls; swap via env) ---
     backend: str = "local"        # local | cloud  (SQLite/in-proc  vs  Firestore/PubSub)
     orchestrator: str = "local"   # local | adk    (custom  vs  real google-adk Runner)
+    # Pub/Sub delivery: 'pull' runs an in-app streaming subscriber (good for a
+    # long-lived local/dev process); 'push' relies on a Pub/Sub PUSH subscription
+    # hitting /api/pubsub/push (correct for Cloud Run, which scales to zero).
+    pubsub_mode: str = "pull"     # pull | push
 
     # --- Slack (optional; comms falls back to console when empty) ---
     slack_webhook_url: str = ""
