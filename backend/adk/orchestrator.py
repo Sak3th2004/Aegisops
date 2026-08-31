@@ -347,13 +347,17 @@ class AdkOrchestrator:
         summary = (f"[{inc.severity.value if inc.severity else 'SEV?'}] {inc.service}: "
                    f"{inc.probable_cause or 'incident'} — {inc.status.value}"
                    + (f" in {res_min}m" if res_min else ""))
-        # Governance: scrub PII BEFORE anything leaves the system.
-        scrubbed = scrub_pii(rca)
-        sl = await slack.post_incident(scrubbed.text, summary=summary)
+        # File the ticket first so the Slack card can link it.
         ticket = CT.file_ticket(inc, summary)
+        inc.findings["comms"] = {"ticket": {"id": ticket.id, "url": ticket.url, "path": ticket.path}}
+        # Concise Slack card (respects Slack's 3000-char section limit); scrub
+        # PII BEFORE anything leaves the system (the full RCA stays in ticket/UI).
+        scrubbed = scrub_pii(CT.render_slack_summary(inc))
+        sl = await slack.post_incident(scrubbed.text, summary=summary)
         rc.remember("comms", {
             "rca": rca,
-            "slack": {"delivered": sl.delivered, "channel": sl.channel, "redactions": scrubbed.redactions},
+            "slack": {"delivered": sl.delivered, "channel": sl.channel,
+                      "redactions": scrubbed.redactions, "detail": sl.detail},
             "ticket": {"id": ticket.id, "url": ticket.url, "path": ticket.path},
             "resolution_minutes": res_min,
         })

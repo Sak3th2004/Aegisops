@@ -75,22 +75,23 @@ Produce the full Markdown RCA now."""
             + (f" in {res_minutes}m" if res_minutes else "")
         )
 
-        # 2. Scrub PII BEFORE anything is sent to Slack ----------------------
-        scrubbed = scrub_pii(rca_text)
-        slack_result = await slack.post_incident(scrubbed.text, summary=rca_summary)
-        # delivered=False is the honest console fallback, not a failure.
-        await ctx.tool(
-            self.name, "slack_poster",
-            f"post_incident(channel intent, redactions={scrubbed.redactions})",
-            {"delivered": slack_result.delivered, "channel": slack_result.channel,
-             "detail": slack_result.detail},
-        )
-
-        # 3. File a real ticket artifact to disk -----------------------------
+        # 2. File the ticket first so the Slack card can link it -------------
         ticket = CT.file_ticket(inc, rca_summary)
+        inc.findings["comms"] = {"ticket": {"id": ticket.id, "url": ticket.url, "path": ticket.path}}
         await ctx.tool(
             self.name, "ticket_filer", f"file_ticket({inc.id})",
             {"id": ticket.id, "path": ticket.path, "url": ticket.url},
+        )
+
+        # 3. Post a concise, PII-scrubbed Slack card (full RCA stays in ticket)
+        scrubbed = scrub_pii(CT.render_slack_summary(inc))
+        slack_result = await slack.post_incident(scrubbed.text, summary=rca_summary)
+        # delivered=False is the honest console/degraded fallback, not a crash.
+        await ctx.tool(
+            self.name, "slack_poster",
+            f"post_incident(redactions={scrubbed.redactions})",
+            {"delivered": slack_result.delivered, "channel": slack_result.channel,
+             "detail": slack_result.detail},
         )
 
         ctx.remember("comms", {
