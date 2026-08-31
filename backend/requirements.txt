@@ -1,0 +1,21 @@
+# --- Web / API ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sse-starlette==2.2.1
+python-multipart==0.0.20
+
+# --- Google AI (mandatory per spec) ---
+google-genai==1.9.0
+google-adk==1.2.1
+
+# --- Config / models ---
+pydantic==2.10.5
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+
+# --- Services ---
+httpx==0.28.1          # Slack webhook + async HTTP
+numpy==2.2.1           # vector similarity for incident memory
+
+# --- Demo asset generation (realistic Grafana snapshot for vision agent) ---
+matplotlib==3.10.0
