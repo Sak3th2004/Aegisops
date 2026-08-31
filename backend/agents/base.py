@@ -76,6 +76,7 @@ class RunContext:
         response_json: bool = False,
         temperature: float = 0.3,
         image_path: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> tuple[Any, GenResult]:
         """One observable Gemini call.
 
@@ -92,7 +93,7 @@ class RunContext:
         else:
             result = await self.deps.gemini.generate(
                 prompt, system=system,
-                response_json=response_json, temperature=temperature,
+                response_json=response_json, temperature=temperature, model=model,
             )
 
         value: Any = result.text

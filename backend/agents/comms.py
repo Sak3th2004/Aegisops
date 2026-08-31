@@ -11,6 +11,7 @@ Closes the loop for BOTH outcomes (resolved or rejected). It:
 from __future__ import annotations
 
 from backend.agents.base import BaseAgent, RunContext
+from backend.config import get_settings
 from backend.guardrails import scrub_pii
 from backend.services import slack
 from backend.tools import comms as CT
@@ -59,7 +60,11 @@ Approved by: {inc.approved_by or 'n/a'}. Time to resolution: {res_minutes} min.
 
 Produce the full Markdown RCA now."""
 
-        rca_text, _ = await ctx.think(self.name, "rca_writer", prompt, system=SYSTEM)
+        # RCA reasoning runs on the Pro tier (Phase 5); other agents stay on Flash.
+        rca_text, _ = await ctx.think(
+            self.name, "rca_writer", prompt, system=SYSTEM,
+            model=get_settings().gemini_model_pro,
+        )
         rca_text = rca_text or f"# RCA — {inc.id}\n\n_No narrative generated._"
         inc.rca_doc = rca_text
         ctx.deps.storage.save_incident(inc)
