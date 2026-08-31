@@ -50,11 +50,15 @@ export const api = {
       body: JSON.stringify({ approver, note }),
     }).then(j<{ resolved: boolean; approved: boolean }>),
 
-  // Fire the NEXT rotating scenario (checkout → cart → payments).
+  // Fire the NEXT rotating scenario (checkout → cart → payments). We send an
+  // explicit empty body so Cloud Run's front-end always gets a Content-Length
+  // (a bodyless POST can be rejected with 411).
   fireDemoAlert: () =>
-    fetch("/api/demo/fire", { method: "POST" }).then(
-      j<{ accepted: boolean; scenario: string; service: string; alert: string }>
-    ),
+    fetch("/api/demo/fire", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    }).then(j<{ accepted: boolean; scenario: string; service: string; alert: string }>),
 
   // Bring-your-own-incident: judges submit their own data (multipart so they can
   // optionally attach a dashboard screenshot for the vision agent to read).
