@@ -1,9 +1,9 @@
 import { motion } from "framer-motion";
-import { Clock, FileText, RefreshCw, ScrollText } from "lucide-react";
+import { Clock, FileText, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import type { AuditStep, WarRoomState } from "../types";
-import { Empty, PanelTitle, Spinner } from "./ui";
+import { Empty, Spinner } from "./ui";
 import Markdown from "./Markdown";
 
 const AGENT_DOT: Record<string, string> = {
@@ -20,6 +20,8 @@ function fmtTime(ts: number) {
   return new Date(ts).toLocaleTimeString([], { hour12: false });
 }
 
+// Body-only RCA + timeline view. The rendered markdown postmortem and the
+// audited agent timeline are two sub-tabs so only one dense thing shows at once.
 export default function RcaTimeline({ state }: { state: WarRoomState }) {
   const id = state.incidentId;
   const [tab, setTab] = useState<"rca" | "timeline">("rca");
@@ -34,8 +36,8 @@ export default function RcaTimeline({ state }: { state: WarRoomState }) {
     setError(null);
     try {
       const [r, a] = await Promise.all([api.rca(id), api.audit(id)]);
-      setRca(r.rca || "");
-      setAudit(a.sort((x, y) => x.ts - y.ts));
+      setRca(r?.rca || "");
+      setAudit(Array.isArray(a) ? [...a].sort((x, y) => x.ts - y.ts) : []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
@@ -49,37 +51,31 @@ export default function RcaTimeline({ state }: { state: WarRoomState }) {
   }, [id, state.done, load]);
 
   return (
-    <section className="panel flex min-h-0 flex-col">
-      <PanelTitle
-        icon={<ScrollText size={15} className="text-signal-amber" />}
-        right={
-          <div className="flex items-center gap-1">
-            <div className="flex rounded-lg border border-white/10 p-0.5">
-              {(["rca", "timeline"] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium capitalize transition-colors ${
-                    tab === t ? "bg-white/10 text-slate-100" : "text-slate-500 hover:text-slate-300"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      {/* Sub-tab toggle + manual refresh */}
+      <div className="flex items-center justify-between border-b border-white/[0.06] px-4 py-2.5">
+        <div className="flex rounded-lg border border-white/10 p-0.5">
+          {(["rca", "timeline"] as const).map((t) => (
             <button
-              onClick={load}
-              disabled={!id || loading}
-              className="btn-ghost rounded-lg p-1.5 disabled:opacity-30"
-              aria-label="Refresh"
+              key={t}
+              onClick={() => setTab(t)}
+              className={`rounded-md px-3 py-1 text-[11px] font-medium capitalize transition-colors ${
+                tab === t ? "bg-white/10 text-slate-100" : "text-slate-500 hover:text-slate-300"
+              }`}
             >
-              <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+              {t === "rca" ? "Postmortem" : "Timeline"}
             </button>
-          </div>
-        }
-      >
-        Postmortem
-      </PanelTitle>
+          ))}
+        </div>
+        <button
+          onClick={load}
+          disabled={!id || loading}
+          className="btn-ghost rounded-lg p-1.5 disabled:opacity-30"
+          aria-label="Refresh"
+        >
+          <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+        </button>
+      </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
         {!id ? (
@@ -89,9 +85,10 @@ export default function RcaTimeline({ state }: { state: WarRoomState }) {
           </Empty>
         ) : error ? (
           <Empty>
-            <div className="text-signal-red">{error}</div>
+            <div className="text-signal-amber">Couldn't load the postmortem yet.</div>
+            <div className="text-slate-600">It's written once the incident closes.</div>
             <button onClick={load} className="btn btn-ghost mt-2">
-              Retry
+              <RefreshCw size={13} /> Retry
             </button>
           </Empty>
         ) : loading && !rca && audit.length === 0 ? (
@@ -107,7 +104,9 @@ export default function RcaTimeline({ state }: { state: WarRoomState }) {
             <Empty>
               <FileText size={20} className="text-slate-600" />
               <div>RCA not generated yet.</div>
-              <div className="text-slate-600">The Comms agent writes it once the incident closes.</div>
+              <div className="text-slate-600">
+                The Comms agent writes it once the incident closes.
+              </div>
             </Empty>
           )
         ) : audit.length === 0 ? (
@@ -133,7 +132,9 @@ export default function RcaTimeline({ state }: { state: WarRoomState }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[12px] font-semibold text-slate-200">{s.agent}</span>
                   <span className="font-mono text-[10.5px] text-slate-500">{s.step}</span>
-                  <span className="ml-auto font-mono text-[10px] text-slate-600">{fmtTime(s.ts)}</span>
+                  <span className="ml-auto font-mono text-[10px] text-slate-600">
+                    {fmtTime(s.ts)}
+                  </span>
                 </div>
                 {(s.reasoning || s.tool_call) && (
                   <p className="mt-1 line-clamp-3 font-mono text-[11px] leading-relaxed text-slate-400">
@@ -143,7 +144,9 @@ export default function RcaTimeline({ state }: { state: WarRoomState }) {
                 {(s.tokens > 0 || s.latency_ms > 0) && (
                   <div className="mt-1 flex gap-1.5">
                     {s.tokens > 0 && (
-                      <span className="chip border-white/10 bg-white/5 text-slate-500">{s.tokens} tok</span>
+                      <span className="chip border-white/10 bg-white/5 text-slate-500">
+                        {s.tokens} tok
+                      </span>
                     )}
                     {s.latency_ms > 0 && (
                       <span className="chip border-signal-blue/20 bg-signal-blue/10 text-signal-blue">
@@ -157,6 +160,6 @@ export default function RcaTimeline({ state }: { state: WarRoomState }) {
           </ol>
         )}
       </div>
-    </section>
+    </div>
   );
 }

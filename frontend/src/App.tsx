@@ -4,11 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Health } from "./api";
 import AgentGraph from "./components/AgentGraph";
 import ApprovalModal from "./components/ApprovalModal";
-import GrafanaPanel from "./components/GrafanaPanel";
 import Header from "./components/Header";
-import InsightStrip from "./components/InsightStrip";
+import IdleHero from "./components/IdleHero";
 import ReasoningStream from "./components/ReasoningStream";
-import RcaTimeline from "./components/RcaTimeline";
+import RightPanel from "./components/RightPanel";
 import RegistryDrawer from "./components/RegistryDrawer";
 import { useIncidentStream } from "./useIncidentStream";
 
@@ -52,6 +51,8 @@ export default function App() {
     !state.decision &&
     modalDismissed !== state.incidentId;
 
+  const hasIncident = !!state.incidentId;
+
   return (
     <div className="flex min-h-screen flex-col">
       <Header
@@ -63,34 +64,33 @@ export default function App() {
         onOpenRegistry={() => setRegistryOpen(true)}
       />
 
-      <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-4 py-5 lg:px-6">
-        <AgentGraph state={state} />
-        <InsightStrip state={state} />
+      {!hasIncident ? (
+        // IDLE — a single clear call-to-action instead of a wall of empty panels.
+        <main className="flex flex-1 items-center justify-center px-4 py-10">
+          <IdleHero firing={firing} onFire={fireAlert} />
+        </main>
+      ) : (
+        // ACTIVE — the animated agent pipeline is the hero; details sit in a clean
+        // two-column layout (live reasoning | tabbed Diagnosis/RCA panel).
+        <main className="mx-auto w-full max-w-[1600px] flex-1 space-y-4 px-4 py-5 lg:px-6">
+          <AgentGraph state={state} />
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-          <div className="lg:col-span-5">
-            <div className="h-[560px]">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="h-[520px] lg:h-[600px]">
               <ReasoningStream state={state} />
             </div>
-          </div>
-          <div className="lg:col-span-3">
-            <div className="h-[560px]">
-              <GrafanaPanel state={state} />
+            <div className="h-[520px] lg:h-[600px]">
+              <RightPanel state={state} />
             </div>
           </div>
-          <div className="lg:col-span-4">
-            <div className="h-[560px]">
-              <RcaTimeline state={state} />
-            </div>
-          </div>
-        </div>
 
-        <footer className="pb-6 pt-2 text-center text-[10.5px] text-slate-600">
-          AegisOps · autonomous SRE on-call · six ADK sub-agents on{" "}
-          <span className="font-mono">{health?.model ?? "gemini-3.5-flash"}</span> · human-gated
-          remediation
-        </footer>
-      </main>
+          <footer className="pb-6 pt-1 text-center text-[10.5px] text-slate-600">
+            AegisOps · autonomous SRE on-call · six ADK sub-agents on{" "}
+            <span className="font-mono">{health?.model ?? "gemini-3.5-flash"}</span> ·
+            human-gated remediation
+          </footer>
+        </main>
+      )}
 
       {state.incidentId && state.plan && (
         <ApprovalModal
