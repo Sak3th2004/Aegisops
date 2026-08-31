@@ -75,6 +75,12 @@ class AdkOrchestrator:
 
     # -------------------------------------------------------------- pipeline
     async def handle_alert(self, alert: Alert) -> Incident:
+        # Keep the demo scenario temporally fresh (bad deploy ~12 min ago) so
+        # Correlation confidence reflects a just-shipped regression, not a stale
+        # fixture. No-op cost is a handful of writes.
+        from backend.seed.seed_data import refresh_demo_timeline
+        refresh_demo_timeline(self.deps.storage)
+
         incident = Incident(status=IncidentStatus.DETECTED, service=alert.service, alert=alert)
         self.deps.storage.save_incident(incident)
         rc = RunContext(incident, self.deps)
