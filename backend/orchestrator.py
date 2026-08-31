@@ -72,6 +72,10 @@ class Orchestrator:
             # --- Comms always runs (resolved OR rejected) to close the loop ---
             await self.comms.run(ctx)
 
+            # Closed-loop learning: a resolved incident becomes institutional memory.
+            from backend.tools.memory import learn_incident
+            learn_incident(self.deps.storage, incident)
+
             await ctx.emit("done", status=incident.status.value)
         except Exception as exc:  # noqa: BLE001 — never let the demo hard-crash
             log.exception("incident %s failed", incident.id)

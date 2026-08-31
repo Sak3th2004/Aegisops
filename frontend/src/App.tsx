@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Health } from "./api";
 import AgentGraph from "./components/AgentGraph";
 import ApprovalModal from "./components/ApprovalModal";
+import CustomIncidentModal from "./components/CustomIncidentModal";
 import Header from "./components/Header";
 import IdleHero from "./components/IdleHero";
 import ReasoningStream from "./components/ReasoningStream";
@@ -15,6 +16,7 @@ export default function App() {
   const { state, conn } = useIncidentStream();
   const [health, setHealth] = useState<Health | null>(null);
   const [registryOpen, setRegistryOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
   const [firing, setFiring] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   // The modal is dismissed locally the instant the operator acts, so a late
@@ -61,6 +63,7 @@ export default function App() {
         health={health}
         firing={firing}
         onFire={fireAlert}
+        onOpenCustom={() => setCustomOpen(true)}
         onOpenRegistry={() => setRegistryOpen(true)}
       />
 
@@ -103,6 +106,12 @@ export default function App() {
           }}
         />
       )}
+
+      <CustomIncidentModal
+        open={customOpen}
+        onClose={() => setCustomOpen(false)}
+        onFired={(msg) => flash(msg)}
+      />
 
       <RegistryDrawer open={registryOpen} onClose={() => setRegistryOpen(false)} />
 

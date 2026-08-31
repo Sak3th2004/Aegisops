@@ -50,15 +50,16 @@ export const api = {
       body: JSON.stringify({ approver, note }),
     }).then(j<{ resolved: boolean; approved: boolean }>),
 
+  // Fire the NEXT rotating scenario (checkout → cart → payments).
   fireDemoAlert: () =>
-    fetch("/api/alerts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        alert: "HighErrorRate",
-        service: "checkout-svc",
-        error_rate: "42%",
-        grafana_snapshot: "backend/seed/grafana_checkout_spike.png",
-      }),
-    }).then(j<{ accepted: boolean; service: string }>),
+    fetch("/api/demo/fire", { method: "POST" }).then(
+      j<{ accepted: boolean; scenario: string; service: string; alert: string }>
+    ),
+
+  // Bring-your-own-incident: judges submit their own data (multipart so they can
+  // optionally attach a dashboard screenshot for the vision agent to read).
+  fireCustom: (form: FormData) =>
+    fetch("/api/incidents/custom", { method: "POST", body: form }).then(
+      j<{ accepted: boolean; service: string; logs_ingested: number; vision_image: boolean }>
+    ),
 };

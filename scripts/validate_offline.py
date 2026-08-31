@@ -63,13 +63,14 @@ class FakeGemini:
                     '"reasoning":"Reverses the regression."}')
         return '{}'
 
-    async def generate(self, prompt, *, system=None, temperature=0.3, response_json=False):
+    async def generate(self, prompt, *, system=None, temperature=0.3, response_json=False, model=None):
         text = self._text_for(prompt, response_json)
-        return GenResult(text=text, tokens=len(text) // 4, latency_ms=12, model=self.model)
+        return GenResult(text=text, tokens=len(text) // 4, latency_ms=12, model=model or self.model)
 
-    async def generate_vision(self, prompt, image_path, *, system=None, temperature=0.2, response_json=False):
+    async def generate_vision(self, prompt, image_path, *, system=None, temperature=0.2,
+                              response_json=False, model=None):
         text = self._text_for(prompt, response_json)
-        return GenResult(text=text, tokens=len(text) // 4, latency_ms=20, model=self.model)
+        return GenResult(text=text, tokens=len(text) // 4, latency_ms=20, model=model or self.model)
 
 
 async def _auto_approve(gate: ApprovalGate, storage: SQLiteStorage) -> None:
