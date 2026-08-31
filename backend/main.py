@@ -43,8 +43,14 @@ async def lifespan(app: FastAPI):
     # Export Vertex config so ADK's Gemini + google-genai pick the Vertex backend.
     settings.apply_google_env()
 
-    # --- The one place local impls are chosen. Firestore/PubSub swap here. ---
-    storage = SQLiteStorage(settings.db_path)
+    # --- The one place impls are chosen. BACKEND=cloud swaps to Firestore. ---
+    if settings.backend.lower() == "cloud":
+        # Local import so `local` mode never needs the firestore package.
+        from backend.services.firestore_storage import FirestoreStorage
+
+        storage = FirestoreStorage(settings.google_cloud_project)
+    else:
+        storage = SQLiteStorage(settings.db_path)
     bus = InProcessBus()
     # ------------------------------------------------------------------------
     storage.init_schema()

@@ -21,3 +21,6 @@ numpy==2.2.1           # vector similarity for incident memory
 
 # --- Demo asset generation (realistic Grafana snapshot for vision agent) ---
 matplotlib==3.10.0
+
+# --- Cloud storage (Phase 3; used when BACKEND=cloud) ---
+google-cloud-firestore>=2.16.0

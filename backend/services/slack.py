@@ -42,12 +42,26 @@ async def post_incident(blocks_text: str, *, summary: str) -> SlackResult:
             payload=payload,
         )
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(settings.slack_webhook_url, json=payload)
-        resp.raise_for_status()
+    # Best-effort delivery: a bad/expired webhook or Slack outage must NEVER
+    # fail the incident. We catch everything, record the failure honestly, and
+    # let the pipeline resolve. Notifying is a side effect, not a critical path.
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(settings.slack_webhook_url, json=payload)
+        if resp.status_code // 100 == 2:
+            return SlackResult(
+                delivered=True, channel="slack",
+                detail=f"Slack responded {resp.status_code}", payload=payload,
+            )
+        # Non-2xx (e.g. 400 invalid_payload / 404 no_service): degrade, don't crash.
         return SlackResult(
-            delivered=True,
-            channel="slack",
-            detail=f"Slack responded {resp.status_code}",
+            delivered=False, channel="error",
+            detail=f"Slack returned {resp.status_code}: {resp.text[:120]}",
+            payload=payload,
+        )
+    except Exception as exc:  # noqa: BLE001 — network/timeout etc.
+        return SlackResult(
+            delivered=False, channel="error",
+            detail=f"Slack post failed: {type(exc).__name__}: {str(exc)[:120]}",
             payload=payload,
         )

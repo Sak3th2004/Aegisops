@@ -52,3 +52,39 @@ def resolution_minutes(incident: Incident) -> float:
     if not incident.resolved_at:
         return 0.0
     return round((incident.resolved_at - incident.detected_at) / 60000.0, 1)
+
+
+def render_slack_summary(incident: Incident) -> str:
+    """A concise Slack incident card (well under Slack's 3000-char section limit).
+
+    The full RCA lives in the ticket + war-room UI; Slack gets a tight, scannable
+    timeline — which is both correct API usage and better on-call UX.
+    """
+    f = incident.findings
+    sev = incident.severity.value if incident.severity else "SEV?"
+    corr = f.get("correlation", {})
+    rem = f.get("remediation", {})
+    mem = f.get("memory", {})
+    res_min = resolution_minutes(incident)
+    status_icon = {"RESOLVED": ":white_check_mark:", "REJECTED": ":no_entry:",
+                   "FAILED": ":x:"}.get(incident.status.value, ":warning:")
+
+    lines = [
+        f"{status_icon} *[{sev}] {incident.service}* — {incident.status.value}",
+        f"> *Impact:* {incident.blast_radius or 'n/a'}",
+        f"> *Root cause:* {incident.probable_cause or 'n/a'}"
+        + (f"  _(confidence {int((incident.confidence or 0)*100)}%)_" if incident.confidence else ""),
+    ]
+    if mem.get("recommendation"):
+        lines.append(f"> *Memory:* {mem['recommendation']}")
+    if rem:
+        approver = incident.approved_by or "pending"
+        lines.append(f"> *Remediation:* `{rem.get('action')}` → {rem.get('target')} "
+                     f"_(risk {rem.get('risk')}, approved by {approver})_")
+    if res_min:
+        lines.append(f"> *Time to resolution:* {res_min} min")
+    ticket = f.get("comms", {}).get("ticket", {})
+    if ticket.get("id"):
+        lines.append(f"> *Ticket:* <{ticket.get('url')}|{ticket.get('id')}>")
+    lines.append("_Autonomously triaged, diagnosed & remediated by AegisOps (human-approved)._")
+    return "\n".join(lines)
