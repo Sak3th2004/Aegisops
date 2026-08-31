@@ -88,7 +88,7 @@ export default function App() {
           </div>
 
           <footer className="pb-6 pt-1 text-center text-[10.5px] text-slate-600">
-            AegisOps · autonomous SRE on-call · six ADK sub-agents on{" "}
+            AegisPilot · autonomous SRE on-call · six ADK sub-agents on{" "}
             <span className="font-mono">{health?.model ?? "gemini-3.5-flash"}</span> ·
             human-gated remediation
           </footer>

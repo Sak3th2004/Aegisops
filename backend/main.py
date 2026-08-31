@@ -1,4 +1,4 @@
-"""AegisOps FastAPI app — event-bus consumer, REST API, and SSE streaming.
+"""AegisPilot FastAPI app — event-bus consumer, REST API, and SSE streaming.
 
 Startup wires the local implementations of the cloud-portable interfaces
 (SQLiteStorage, InProcessBus) into the Orchestrator and subscribes it to the
@@ -103,7 +103,7 @@ async def lifespan(app: FastAPI):
     app.state.gate = gate
     app.state.orchestrator = orchestrator
 
-    log.info("AegisOps ready. orchestrator=%s  backend=%s  vertex=%s  model=%s  slack=%s",
+    log.info("AegisPilot ready. orchestrator=%s  backend=%s  vertex=%s  model=%s  slack=%s",
              type(orchestrator).__name__, settings.backend, settings.use_vertex,
              settings.gemini_model, settings.has_slack)
     yield
@@ -112,7 +112,7 @@ async def lifespan(app: FastAPI):
         bus.close()
 
 
-app = FastAPI(title="AegisOps", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="AegisPilot", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )

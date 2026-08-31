@@ -1,4 +1,4 @@
-"""Offline end-to-end validation of the whole AegisOps pipeline.
+"""Offline end-to-end validation of the whole AegisPilot pipeline.
 
 Runs the real Orchestrator + all six real agents + approval gate + storage +
 stream hub, with Gemini swapped for a deterministic fake so it needs NO API key.
@@ -123,7 +123,7 @@ async def main() -> int:
         "audit trail non-empty": len(audit) > 5,
     }
 
-    print("\n=== AegisOps offline pipeline validation ===")
+    print("\n=== AegisPilot offline pipeline validation ===")
     for name, ok in checks.items():
         print(f"  [{'PASS' if ok else 'FAIL'}] {name}")
     print(f"\n  audit steps recorded: {len(audit)}")

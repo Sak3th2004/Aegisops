@@ -86,5 +86,5 @@ def render_slack_summary(incident: Incident) -> str:
     ticket = f.get("comms", {}).get("ticket", {})
     if ticket.get("id"):
         lines.append(f"> *Ticket:* <{ticket.get('url')}|{ticket.get('id')}>")
-    lines.append("_Autonomously triaged, diagnosed & remediated by AegisOps (human-approved)._")
+    lines.append("_Autonomously triaged, diagnosed & remediated by AegisPilot (human-approved)._")
     return "\n".join(lines)

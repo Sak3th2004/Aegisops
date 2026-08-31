@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# AegisOps → Cloud Run deploy (full GCP / Vertex path, upgrade spec Phase 6).
+# AegisPilot → Cloud Run deploy (full GCP / Vertex path, upgrade spec Phase 6).
 #
 # Builds the single-container image from docker/Dockerfile with Cloud Build,
 # pushes it to Artifact Registry, deploys to Cloud Run (cost-safe: min 0 /
@@ -60,7 +60,7 @@ sleep 30
 # --- Artifact Registry repo (idempotent) -------------------------------------
 if ! gcloud artifacts repositories describe "$REPO" --location "$REGION" >/dev/null 2>&1; then
   gcloud artifacts repositories create "$REPO" \
-    --repository-format=docker --location="$REGION" --description="AegisOps images"
+    --repository-format=docker --location="$REGION" --description="AegisPilot images"
 fi
 
 # --- Build the image from docker/Dockerfile (repo root is the context) -------

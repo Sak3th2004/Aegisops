@@ -25,7 +25,7 @@ from backend.services.gemini import gemini  # noqa: E402
 
 async def main() -> int:
     s = get_settings()
-    print("=== AegisOps Vertex AI preflight ===")
+    print("=== AegisPilot Vertex AI preflight ===")
     print(f"  use_vertex      : {s.use_vertex}")
     print(f"  project         : {s.google_cloud_project}")
     print(f"  vertex_location : {s.vertex_location}  (model endpoint)")
@@ -47,7 +47,7 @@ async def main() -> int:
 
     try:
         r = await gemini.generate(
-            "You are AegisOps running on Vertex AI. Reply with exactly: VERTEX-OK",
+            "You are AegisPilot running on Vertex AI. Reply with exactly: VERTEX-OK",
             temperature=0,
         )
     except Exception as exc:  # noqa: BLE001 — report the exact error, don't hide it

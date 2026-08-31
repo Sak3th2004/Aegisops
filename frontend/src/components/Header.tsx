@@ -66,7 +66,7 @@ export default function Header({
           </span>
           <div className="leading-tight">
             <div className="flex items-center gap-2">
-              <span className="text-[15px] font-bold tracking-tight text-slate-50">AegisOps</span>
+              <span className="text-[15px] font-bold tracking-tight text-slate-50">AegisPilot</span>
               <span className="rounded bg-white/5 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-widest text-slate-400">
                 War Room
               </span>
