@@ -38,14 +38,14 @@ def main() -> int:
         resp = httpx.post(f"{args.url}/api/alerts", json=payload, timeout=15.0)
         resp.raise_for_status()
     except httpx.HTTPError as exc:
-        print(f"✗ Failed to publish alert: {exc}", file=sys.stderr)
+        print(f"[FAIL] Failed to publish alert: {exc}", file=sys.stderr)
         print("  Is the backend running?  uvicorn backend.main:app --port 8080", file=sys.stderr)
         return 1
 
-    print("✓ Alert published to AegisOps event bus:")
+    print("[OK] Alert published to AegisOps event bus:")
     print(f"    {payload['alert']} on {payload['service']} @ {payload['error_rate']}")
     print(f"  Response: {resp.json()}")
-    print("  Watch the war room — the agents are now working the incident.")
+    print("  Watch the war room -- the agents are now working the incident.")
     return 0
 
 
