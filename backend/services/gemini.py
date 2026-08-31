@@ -104,19 +104,31 @@ class GeminiService:
         self._client: Optional[genai.Client] = None
 
     # Lazily construct the client so importing this module never explodes when
-    # the key is absent (unit tests, tooling). The key is only required at the
-    # moment of the first real call.
+    # auth is absent (unit tests, tooling). Auth is only required at the moment
+    # of the first real call. Two backends, selected by config:
+    #   * Vertex AI  → ADC (no key), billed to the GCP project
+    #   * AI Studio  → API key (free tier)
     def _get_client(self) -> genai.Client:
         if self._client is None:
-            if not self._settings.has_gemini_key:
-                raise RuntimeError(
-                    "GEMINI_API_KEY is not set. Copy .env.example to .env and "
-                    "paste your Google AI Studio key. AegisOps uses real Gemini "
-                    "calls — nothing is stubbed."
+            s = self._settings
+            if s.use_vertex:
+                # Vertex path: ADC handles auth; model region is vertex_location
+                # (gemini-3.5-flash lives in 'global', not us-central1).
+                self._client = genai.Client(
+                    vertexai=True,
+                    project=s.google_cloud_project or None,
+                    location=s.vertex_location,
                 )
-            # AI Studio key path (NOT Vertex): passing api_key selects the
-            # Gemini Developer API backend automatically.
-            self._client = genai.Client(api_key=self._settings.gemini_api_key)
+            elif s.has_gemini_key:
+                # AI Studio key path: passing api_key selects the Gemini
+                # Developer API backend automatically.
+                self._client = genai.Client(api_key=s.gemini_api_key)
+            else:
+                raise RuntimeError(
+                    "No Gemini auth configured. Either set GEMINI_API_KEY (AI "
+                    "Studio) or set GOOGLE_GENAI_USE_VERTEXAI=true with ADC "
+                    "(gcloud auth application-default login). Nothing is stubbed."
+                )
         return self._client
 
     @property

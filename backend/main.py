@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
+from backend.adk.orchestrator import AdkOrchestrator
 from backend.agents.base import Deps
 from backend.config import SEED_DIR, get_settings
 from backend.guardrails import ApprovalDecision, ApprovalGate
@@ -39,6 +40,8 @@ log = logging.getLogger("aegisops.main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    # Export Vertex config so ADK's Gemini + google-genai pick the Vertex backend.
+    settings.apply_google_env()
 
     # --- The one place local impls are chosen. Firestore/PubSub swap here. ---
     storage = SQLiteStorage(settings.db_path)
@@ -51,7 +54,12 @@ async def lifespan(app: FastAPI):
 
     gate = ApprovalGate()
     deps = Deps(storage=storage, gemini=gemini, hub=hub, gate=gate)
-    orchestrator = Orchestrator(deps)
+    # Orchestrator selection: real google-adk (default) or the local fallback.
+    # The local Orchestrator is never deleted — set ORCHESTRATOR=local to use it.
+    if settings.orchestrator.lower() == "adk":
+        orchestrator = AdkOrchestrator(deps)
+    else:
+        orchestrator = Orchestrator(deps)
     bus.subscribe(orchestrator.handle_alert)
 
     app.state.settings = settings
@@ -60,8 +68,8 @@ async def lifespan(app: FastAPI):
     app.state.gate = gate
     app.state.orchestrator = orchestrator
 
-    log.info("AegisOps ready. Model=%s  key=%s  slack=%s",
-             settings.gemini_model, settings.has_gemini_key, settings.has_slack)
+    log.info("AegisOps ready. orchestrator=%s  vertex=%s  model=%s  slack=%s",
+             type(orchestrator).__name__, settings.use_vertex, settings.gemini_model, settings.has_slack)
     yield
 
 
