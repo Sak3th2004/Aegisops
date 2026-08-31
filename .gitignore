@@ -26,3 +26,8 @@ frontend/.vite/
 Thumbs.db
 .idea/
 .vscode/
+
+# Runtime artifacts
+tickets/
+.venv/server.log
+.venv/adk_install.log
