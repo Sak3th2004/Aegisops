@@ -1,247 +1,159 @@
-# AegisOps
+# AegisOps — Autonomous SRE On-Call Agent
 
-**Autonomous multi-agent SRE on-call.** When a production alert fires, AegisOps
-triages it, diagnoses the logs *and reads the Grafana dashboard with Gemini
-vision*, correlates against recent deploys, recalls similar past incidents,
-proposes a remediation **gated by human approval**, executes it, and auto-writes
-the RCA — then posts the timeline to Slack and files a ticket. The entire 3am
-on-call loop, run by six specialized agents under one orchestrator.
+> **An autonomous multi-agent SRE that works the entire 3am on-call loop.** When a
+> production alert fires, AegisOps triages it, diagnoses the logs **and reads the
+> Grafana dashboard with multimodal Gemini vision**, correlates against recent
+> deploys, recalls similar past incidents, proposes a remediation **gated by human
+> approval**, executes it, auto-writes the RCA, posts to Slack, and files a ticket —
+> streaming every reasoning step live to an "Incident War Room".
 
-Built on **Gemini 3.5 Flash** (Google AI Studio key) with an **ADK-style
-orchestrator-with-sub-agents** topology. Runs end to end on the **zero-billing
-free tier** — SQLite for state, an in-process event bus for ingestion — and
-deploys to **Cloud Run** for the "runs on Google Cloud" proof.
+Built for **#AllThingsAgenticHackathon** (The Taskmaster track) on real Google Cloud:
+**Google ADK** (`LlmAgent` + `Runner`) orchestrating six specialized agents on
+**Gemini 3.5 Flash** (+ **Gemini Pro** for the RCA) via **Vertex AI**, with
+**Firestore**, **Pub/Sub**, and **Cloud Run**.
 
----
-
-## Features
-
-- **Six specialized agents + orchestrator**, not one monolithic prompt. Each has
-  its own instruction prompt, scoped tools, and model config.
-- **Multimodal diagnosis** — the Diagnosis agent reads the actual Grafana
-  snapshot with Gemini vision to confirm the anomaly.
-- **503-safe by design** — *every* model call funnels through one
-  `GeminiService` with exponential-backoff-and-jitter retry, so the free tier's
-  throttling never crashes the live demo.
-- **Human-in-the-loop approval gate** — destructive remediations physically
-  cannot execute until a human clicks Approve (an asyncio handshake, not a
-  polled flag).
-- **Every decision observable** — every agent step (input, reasoning, tool call,
-  output, tokens, latency) is persisted to an audit log *and* streamed live to
-  the UI over Server-Sent Events.
-- **Governance layer** — approval gate, PII scrubber ("Model Armor" concept),
-  full audit trail, and an agent registry surfaced in the UI.
-- **Cloud-portable** — `StorageService`/`EventBus` interfaces mean the same code
-  swaps SQLite→Firestore and the in-process bus→Pub/Sub by changing two lines.
+**🔴 Live demo:** https://aegisops-kjacopurja-uc.a.run.app · **Health:** [`/api/health`](https://aegisops-kjacopurja-uc.a.run.app/api/health)
 
 ---
 
-## Architecture summary
+## What makes it strong
+
+- **Real multi-agent, not one big prompt.** An ADK `Runner` orchestrates six scoped
+  `LlmAgent`s (Triage · Diagnosis · Correlation · Memory · Remediation · Comms), each
+  with its own instruction, tools, and model config. Reasoning fans out across agents.
+- **Multimodal.** The Diagnosis agent sends the actual Grafana PNG to Gemini vision to
+  confirm the anomaly and produce an annotation the UI overlays on the image.
+- **Human-in-the-loop governance.** The Remediation agent physically **halts** on an
+  async approval gate; the destructive executor is never exposed to the model. A PII
+  scrubber ("Model Armor") redacts anything bound for Slack.
+- **Every decision observable.** Every agent step (input, reasoning, tool call, output,
+  tokens, latency) is persisted to an audit trail **and** streamed live over SSE.
+- **503-safe.** Every model call — Flash and Pro, ADK and local — is wrapped in
+  exponential-backoff-with-jitter retry. The live demo cannot crash on a throttle.
+- **Cloud-portable by design.** `StorageService` and `EventBus` interfaces let the same
+  code run locally (SQLite + in-process bus) or on GCP (Firestore + Pub/Sub) by flipping
+  one env var. Both implementations are kept in the repo.
+
+---
+
+## Architecture (short)
 
 ```
-publish_alert.py ──▶ POST /api/alerts ──▶ EventBus (InProcessBus)
-                                              │
-                                              ▼
-                                        Orchestrator ── state machine
-                                              │
-      ┌──────────┬──────────┬───────────┬─────┴─────┬─────────────┬──────────┐
-      ▼          ▼          ▼           ▼           ▼             ▼          ▼
-   Triage   Diagnosis  Correlation   Memory    Remediation     Comms
-      │          │          │           │        (approval        │
-      └──────────┴──────────┴───────────┴───────── gate) ─────────┘
-                              │
+Alert ─▶ Pub/Sub topic ─▶ Cloud Run (FastAPI)
+                              │  push /api/pubsub/push
                               ▼
-                       GeminiService (503-safe retry) ──▶ Gemini 3.5 Flash
+                     ADK Runner (Orchestrator)
+        ┌──────────┬───────────┬───────────┬──────────┬─────────────┬────────┐
+        ▼          ▼           ▼           ▼          ▼             ▼        │
+     Triage    Diagnosis   Correlation   Memory   Remediation    Comms      │
+     (Flash)   (Flash+     (Flash)       (Flash)  (Flash,        (Pro RCA)  │
+                vision)                            approval gate)            │
+        └────────────── every model call via RetryGemini ─▶ Vertex AI ──────┘
                               │
-             StorageService (SQLite)   StreamHub ──▶ SSE ──▶ React War Room
+             Firestore (state/audit) ─ StreamHub ─▶ SSE ─▶ React War Room
 ```
 
-The whole backend is packaged into a single container and wrapped by **Cloud
-Run**. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full component breakdown,
-Mermaid diagrams, and the incident state machine.
+Full details + Mermaid diagrams: [ARCHITECTURE.md](ARCHITECTURE.md).
 
----
+### The six agents (from the Firestore `agent_registry`)
 
-## Multi-agent lineup
-
-The agent registry (`backend/seed/seed_data.py`, surfaced at `GET /api/registry`):
-
-| Agent | Scope | Allowed tools |
+| Agent | Job | Tools |
 |---|---|---|
-| **Orchestrator** | Owns incident lifecycle + state machine | `subagent_handoff`, `state_writer` |
-| **Triage** | Classify severity, service, blast radius, routing | `severity_classifier`, `service_resolver` |
-| **Diagnosis** | Summarize logs + read Grafana image (vision) | `log_fetcher`, `grafana_vision`, `log_classifier` |
-| **Correlation** | Correlate deploys/changes to the incident window | `deploy_history_query`, `change_correlator` |
-| **Memory** | Vector-similarity search over past incident fingerprints | `incident_memory_search` |
-| **Remediation** | Propose a reversible fix; **HALT for human approval** | `remediation_planner`, `approval_gate`, `executor` |
-| **Comms** | Generate RCA + timeline; post Slack; file ticket | `rca_writer`, `slack_poster`, `ticket_filer` |
-
-All sub-agents run **`gemini-3.5-flash`**. The Orchestrator routes an incident
-through them in order and owns the state machine; the Remediation agent owns the
-approval-gate transitions because only it knows the gate outcome.
+| **Triage** | Severity (SEV1–4), affected service, blast radius, on-call routing | `resolve_service_and_severity` |
+| **Diagnosis** | Summarize + classify logs; **read the Grafana image (vision)**; fingerprint | `fetch_and_classify_logs`, `grafana_vision` |
+| **Correlation** | Score recent deploys by proximity; name probable root cause + confidence | `query_recent_deploys` |
+| **Memory** | Vector-similarity search over past-incident fingerprints | `search_incident_memory` |
+| **Remediation** | Propose reversible fix (rollback/scale/restart/flag-off); **halt for approval** | `propose_remediation`, `approval_gate`, `executor` |
+| **Comms** | Auto-write the RCA (**Gemini Pro**); PII-scrub + post to Slack; file a ticket | `rca_writer`, `slack_poster`, `ticket_filer` |
 
 ---
 
 ## Prerequisites
 
-- **Python 3.11**
-- **Node 18+** (only needed to build/run the frontend)
-- A free **Google AI Studio API key** — https://aistudio.google.com/apikey
-  (no billing account required)
+- **Python 3.11**, **Node 18+**
+- **Google Cloud** project with billing, and these APIs enabled: Vertex AI, Firestore,
+  Pub/Sub, Cloud Run, Cloud Build, Artifact Registry
+- **gcloud CLI**, authenticated with Application Default Credentials:
+  ```bash
+  gcloud auth login
+  gcloud config set project <YOUR_PROJECT_ID>
+  gcloud auth application-default login      # ADC — no API key needed
+  ```
+- A **Native-mode Firestore** database (one-time):
+  ```bash
+  gcloud firestore databases create --location=us-central1 --type=firestore-native
+  ```
+- *(Optional)* a Slack incoming-webhook URL for real notifications.
+
+> **Free-tier alternative (no billing):** set `GOOGLE_GENAI_USE_VERTEXAI=false` and
+> `GEMINI_API_KEY=<AI Studio key>`, plus `BACKEND=local` / `ORCHESTRATOR=local`. The app
+> then runs entirely on SQLite + an in-process bus with the AI Studio key.
 
 ---
 
 ## Setup
 
-Run from the repo root:
-
 ```bash
-# 1. Create and activate a virtual environment
+# 1. Backend deps
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
-# 2. Install backend dependencies
+source .venv/Scripts/activate      # macOS/Linux: source .venv/bin/activate
 pip install -r backend/requirements.txt
 
-# 3. Configure your key
-cp .env.example .env             # Windows: copy .env.example .env
-#   then edit .env and set GEMINI_API_KEY=<your AI Studio key>
+# 2. Config
+cp .env.example .env               # then edit .env (see the env table below)
 ```
 
-Nothing in AegisOps is stubbed — the agents make real Gemini calls, so a valid
-`GEMINI_API_KEY` is required before the first incident.
+### `.env` (Vertex / full-GCP mode)
+
+| Variable | Example | Meaning |
+|---|---|---|
+| `GOOGLE_GENAI_USE_VERTEXAI` | `true` | Route Gemini through Vertex AI (ADC auth) |
+| `GOOGLE_CLOUD_PROJECT` | `aegisops-12345` | Your GCP project |
+| `GOOGLE_CLOUD_LOCATION` | `us-central1` | Compute region (Firestore/Pub-Sub/Run) |
+| `VERTEX_LOCATION` | `global` | **Model** region — `gemini-3.5-flash` is published in `global` |
+| `GEMINI_MODEL` | `gemini-3.5-flash` | Model for the five fast agents |
+| `GEMINI_MODEL_PRO` | `gemini-2.5-pro` | Model for the Comms RCA (3.5-pro not yet on Vertex) |
+| `BACKEND` | `cloud` | `cloud` = Firestore + Pub/Sub · `local` = SQLite + in-proc |
+| `ORCHESTRATOR` | `adk` | `adk` = real google-adk Runner · `local` = custom fallback |
+| `PUBSUB_MODE` | `pull` | `pull` for local dev · `push` for Cloud Run |
+| `SLACK_WEBHOOK_URL` | *(optional)* | Real Slack posts; console fallback if unset |
 
 ---
 
-## Run the backend
-
-From the repo root:
+## Run locally
 
 ```bash
+# Seed Firestore once (idempotent). Skip for BACKEND=local (SQLite seeds on boot).
+python scripts/seed_firestore.py
+
+# Backend (from repo root):
 uvicorn backend.main:app --port 8080
+
+# Frontend (separate terminal):
+cd frontend && npm install && npm run dev   # war room at http://localhost:5173
 ```
 
-On startup the app initializes the SQLite schema, seeds realistic fixtures (a bad
-deploy 12 min before the alert, a 5xx log stream, a matching prior-incident
-memory, the agent registry) and generates the demo Grafana snapshot. Health
-check:
+### Fire the demo incident
 
 ```bash
-curl http://localhost:8080/api/health
-# {"status":"ok","model":"gemini-3.5-flash","gemini_key_present":true,"slack_configured":false}
+python scripts/publish_alert.py             # via HTTP  →  /api/alerts
+python scripts/publish_alert.py --pubsub    # via REAL Pub/Sub  →  push  →  orchestrator
 ```
 
-## Run the frontend
+Then watch the war room: the six agents activate one by one, reasoning streams live,
+Diagnosis reads the Grafana image, Remediation halts for your **Approve**, and on approval
+it resolves, writes the RCA, posts to Slack, and files a ticket.
 
-The React "Incident War Room" lives in `frontend/`:
+### The demo flow (end to end)
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Keep the backend running on `:8080` — the war room consumes its REST API and the
-`GET /api/stream` SSE feed. In the single-container Cloud Run build, the backend
-serves the compiled frontend directly (`backend/main.py` mounts `frontend/dist`
-at `/` when it exists), so no separate dev server is needed in production.
-
-## Fire the demo
-
-With the backend running, drop the demo alert onto the event bus:
-
-```bash
-python scripts/publish_alert.py
-# optional: python scripts/publish_alert.py --url http://localhost:8080
-```
-
-This POSTs to `/api/alerts` (exactly as a real Pub/Sub push would), the
-Orchestrator spins up an incident, and the war room lights up.
-
-### Demo flow (spec §5)
-
-1. `scripts/publish_alert.py` drops a real alert: `HighErrorRate` on
-   `checkout-svc` at `42%`, with the Grafana snapshot path.
-2. Event bus → Orchestrator spins up an incident (`DETECTED`).
-3. UI lights up: agents activate one by one, reasoning streaming live.
-4. **Triage** → SEV1, `checkout-svc`, ~40% of traffic.
-5. **Diagnosis** → summarizes the error logs *and* Gemini vision reads the
-   Grafana image, confirms the latency spike, classifies the log lines.
-6. **Correlation** → "`checkout-svc v2.4.1` deployed 12 min ago — ~0.91
-   confidence root cause."
-7. **Memory** → "Seen 2× before, both fixed by rollback, avg ~4 min."
-8. **Remediation** → proposes `rollback checkout-svc → v2.4.0`, risk low, and
-   **halts for approval**.
-9. Human clicks **Approve** → the executor runs (a clean, explicit simulation),
-   status → `RESOLVED`.
-10. **Comms** → generates the RCA + timeline, posts to Slack (real webhook if
-    configured, console fallback otherwise), files a ticket.
-11. UI shows the full audit trail + generated RCA + resolution time.
-
-Approve/reject from the UI, or directly:
-
-```bash
-curl -X POST http://localhost:8080/api/incidents/<id>/approve \
-     -H 'Content-Type: application/json' -d '{"approver":"on-call-engineer"}'
-```
-
----
-
-## Cloud-portable
-
-AegisOps is written cloud-native in *shape* while running for free. The two
-local implementations — `SQLiteStorage` (behind the `StorageService` interface)
-and `InProcessBus` (behind the `EventBus` interface) — are chosen in exactly one
-place, the FastAPI lifespan in `backend/main.py`:
-
-```python
-# --- The one place local impls are chosen. Firestore/PubSub swap here. ---
-storage = SQLiteStorage(settings.db_path)
-bus = InProcessBus()
-# ------------------------------------------------------------------------
-```
-
-Swapping to real GCP is writing `FirestoreStorage(StorageService)` /
-`PubSubBus(EventBus)` and changing those two constructor lines — the agents, the
-orchestrator, and the publisher script don't change.
-
----
-
-## API endpoints
-
-All served by `backend/main.py`:
-
-| Method | Route | Purpose |
-|---|---|---|
-| `POST` | `/api/alerts` | Publish an `Alert` onto the event bus |
-| `GET` | `/api/health` | Status, model, key/slack presence |
-| `GET` | `/api/registry` | The agent registry |
-| `GET` | `/api/incidents` | All incidents |
-| `GET` | `/api/incidents/{id}` | One incident (with `findings`) |
-| `GET` | `/api/incidents/{id}/audit` | Full audit trail |
-| `GET` | `/api/incidents/{id}/rca` | Generated RCA + comms findings |
-| `GET` | `/api/incidents/{id}/grafana` | The exact PNG the vision agent read |
-| `POST` | `/api/incidents/{id}/approve` | Approve the remediation (body `{approver,note}`) |
-| `POST` | `/api/incidents/{id}/reject` | Reject the remediation |
-| `GET` | `/api/stream` | SSE — all incidents |
-| `GET` | `/api/stream/{id}` | SSE — one incident |
-
----
-
-## Environment variables
-
-Configured in `.env` (see `.env.example`). Read once via `backend/config.py`:
-
-| Variable | Default | Purpose |
-|---|---|---|
-| `GEMINI_API_KEY` | *(empty)* | **Required.** Google AI Studio key (free tier, not Vertex). |
-| `GEMINI_MODEL` | `gemini-3.5-flash` | Flash-only model id. Change if your key 403/404s on the default. |
-| `SLACK_WEBHOOK_URL` | *(empty)* | Optional. Comms agent falls back to console when unset. |
-| `HOST` | `0.0.0.0` | Server bind host. |
-| `PORT` | `8080` | Server port. |
-| `AEGIS_DB_PATH` | `aegisops.db` | SQLite path (resolved against repo root). |
-| `GEMINI_MAX_RETRIES` | `5` | Retry attempts for the 503-safe wrapper. |
-| `GEMINI_BASE_DELAY` | `1.0` | Base backoff delay (seconds). |
+1. Alert `{HighErrorRate, checkout-svc, 42%, grafana_snapshot}` lands on the bus.
+2. **Triage** → SEV1, checkout-svc, ~40% blast radius.
+3. **Diagnosis** → summarizes 5xx/DB-pool logs + **Gemini vision confirms the latency spike**.
+4. **Correlation** → "checkout-svc v2.4.1 deployed ~12 min ago — probable root cause".
+5. **Memory** → "seen before, resolved via rollback in ~4 min".
+6. **Remediation** → proposes `rollback → v2.4.0`, risk low, **halts for approval**.
+7. Human clicks **Approve** → executor runs (clean simulation) → status `RESOLVED`.
+8. **Comms** → Gemini-Pro RCA + timeline, PII-scrubbed Slack post, ticket filed.
 
 ---
 
@@ -251,25 +163,58 @@ Configured in `.env` (see `.env.example`). Read once via `backend/config.py`:
 ./deploy.sh
 ```
 
-The script reads `GEMINI_API_KEY`, `GEMINI_MODEL`, and optional
-`SLACK_WEBHOOK_URL` from your local `.env` and passes them as Cloud Run env vars
-— **secrets are never baked into the image**. See [deploy.sh](deploy.sh) and
-[docker/Dockerfile](docker/Dockerfile).
+One script: enables APIs, grants the runtime service account its roles, builds the
+single container from `docker/Dockerfile` via Cloud Build, deploys to Cloud Run
+(min 1 / max 2, CPU always-allocated so the async approval-gated pipeline runs), and
+wires a **Pub/Sub push subscription** to `<url>/api/pubsub/push`. No secret keys are
+baked into the image — auth is the runtime service account's ADC.
+
+Fire the live demo:
+```bash
+python scripts/publish_alert.py --pubsub    # real Pub/Sub → push → Cloud Run
+```
+
+---
+
+## Verify without spending much
+
+| Script | Proves |
+|---|---|
+| `python scripts/verify_vertex.py` | One real Vertex Flash call (ADC + model id) |
+| `python scripts/validate_offline.py` | Full pipeline wiring, **no API key** (fake model) |
+| `python scripts/validate_adk.py` | Full incident on **real google-adk + Vertex** |
+| `python scripts/validate_firestore.py` | Full incident persisted + re-read from **real Firestore** |
+
+---
+
+## Repo layout
+
+```
+backend/
+  main.py            FastAPI app, SSE, approval + Pub/Sub-push endpoints, impl selection
+  orchestrator.py    local (custom) orchestrator — fallback (ORCHESTRATOR=local)
+  adk/               REAL google-adk path: retry_llm, tools, callbacks, agents, orchestrator
+  agents/            local agent implementations (fallback) + shared BaseAgent runtime
+  tools/             deterministic tools (every tool = real function)
+  services/          gemini (503-safe, Vertex/AI-Studio) · storage (SQLite|Firestore)
+                     · eventbus (in-proc|Pub/Sub) · stream (SSE) · slack · embedding
+  guardrails.py      approval gate + PII scrubber
+  seed/              fixtures + matplotlib Grafana snapshot
+frontend/            React + Vite + TS + Tailwind war room
+scripts/             publish_alert, seed_firestore, verify_vertex, validate_*
+docker/Dockerfile    single-container build (frontend + backend)
+deploy.sh            Cloud Run deploy + Pub/Sub push wiring
+```
 
 ---
 
 ## Troubleshooting
 
-- **Gemini 503 / 429 / "overloaded".** Expected on the free tier under load — the
-  built-in exponential-backoff-with-jitter retry (`GEMINI_MAX_RETRIES`,
-  `GEMINI_BASE_DELAY`) absorbs it. No action needed; the demo won't crash.
-- **Model id 403/404.** If your key rejects `gemini-3.5-flash`, change **only**
-  the `GEMINI_MODEL` line in `.env` (e.g. `gemini-2.0-flash`). Stay on a Flash
-  model — Pro is paid-tier-only and will 403 on a free key.
-- **`GEMINI_API_KEY is not set`.** Copy `.env.example` → `.env` and paste your
-  AI Studio key; `/api/health` reports `gemini_key_present`.
-- **Approval never resolves.** The gate times out after 10 minutes and is
-  treated as a hold (never auto-approves). Click Approve/Reject in the UI, or
-  POST to `/api/incidents/{id}/approve`.
-- **Slack shows "console" channel.** `SLACK_WEBHOOK_URL` is unset — that's the
-  honest fallback, not a failure. Set the webhook in `.env` to post for real.
+- **`gemini-3.5-flash` 404 on Vertex** → it's published in `VERTEX_LOCATION=global`, not
+  `us-central1`. Keep them separate (already the default). Any model id can be overridden
+  in one line via `GEMINI_MODEL`.
+- **503 / 429 from Vertex** → handled automatically by the retry wrapper (backoff + jitter).
+- **Firestore `NotFound (default) does not exist`** → create the Native-mode DB (see Prereqs).
+- **Cloud Build 403 on the source bucket** → `deploy.sh` grants the build roles; re-run it.
+- **Comms empty on Cloud Run** → the pipeline needs CPU outside request handling;
+  `deploy.sh` sets `--no-cpu-throttling --min-instances 1`.
