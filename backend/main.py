@@ -57,7 +57,9 @@ async def lifespan(app: FastAPI):
         from backend.services.pubsub_bus import PubSubBus
 
         bus = PubSubBus(settings.google_cloud_project)
-        bus.ensure()  # idempotent: create topic + subscription; fail loud on auth
+        # Push mode (Cloud Run) needs only the topic; pull mode also needs the
+        # in-app subscription. Idempotent; fails loud on auth errors.
+        bus.ensure(create_pull_subscription=settings.pubsub_mode.lower() != "push")
     else:
         bus = InProcessBus()
     # ------------------------------------------------------------------------
@@ -81,7 +83,13 @@ async def lifespan(app: FastAPI):
         orchestrator = AdkOrchestrator(deps)
     else:
         orchestrator = Orchestrator(deps)
-    bus.subscribe(orchestrator.handle_alert)
+    # In PUSH mode (Cloud Run) Pub/Sub delivers to POST /api/pubsub/push, so we
+    # do NOT start an in-app pull subscriber (an instance at scale-zero can't
+    # pull). Otherwise subscribe the orchestrator to the bus directly.
+    if not (settings.backend.lower() == "cloud" and settings.pubsub_mode.lower() == "push"):
+        bus.subscribe(orchestrator.handle_alert)
+    else:
+        log.info("Pub/Sub PUSH mode: incidents arrive via POST /api/pubsub/push")
 
     app.state.settings = settings
     app.state.storage = storage

@@ -44,14 +44,18 @@ class PubSubBus(EventBus):
         self._pull_future = None
 
     # -- provisioning (idempotent) --
-    def ensure(self) -> None:
-        """Create the topic + pull subscription if absent. Fails loud on auth
-        errors (per the upgrade rules) rather than hiding them."""
+    def ensure(self, create_pull_subscription: bool = True) -> None:
+        """Create the topic (+ optional pull subscription) if absent. Fails loud
+        on auth errors (per the upgrade rules) rather than hiding them. In PUSH
+        mode the pull subscription is skipped — a separate push subscription
+        (created by deploy.sh) delivers to Cloud Run instead."""
         try:
             self._publisher.create_topic(name=self._topic_path)
             log.info("created Pub/Sub topic %s", self._topic_path)
         except AlreadyExists:
             pass
+        if not create_pull_subscription:
+            return
         try:
             self._subscriber.create_subscription(
                 name=self._sub_path, topic=self._topic_path,
