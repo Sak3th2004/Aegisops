@@ -142,8 +142,10 @@ class GeminiService:
         system: Optional[str],
         temperature: float,
         response_json: bool,
+        model: Optional[str] = None,
     ) -> GenResult:
         client = self._get_client()
+        model_id = model or self.model
         cfg_kwargs: dict[str, Any] = {"temperature": temperature}
         if system:
             cfg_kwargs["system_instruction"] = system
@@ -159,7 +161,7 @@ class GeminiService:
             started = time.perf_counter()
             try:
                 resp = client.models.generate_content(
-                    model=self.model, contents=contents, config=config
+                    model=model_id, contents=contents, config=config
                 )
                 latency_ms = int((time.perf_counter() - started) * 1000)
                 text = (resp.text or "").strip()
@@ -167,7 +169,7 @@ class GeminiService:
                     text=text,
                     tokens=_estimate_tokens(resp, text),
                     latency_ms=latency_ms,
-                    model=self.model,
+                    model=model_id,
                     attempts=attempt + 1,
                     raw=resp,
                 )
@@ -191,11 +193,13 @@ class GeminiService:
         system: Optional[str] = None,
         temperature: float = 0.3,
         response_json: bool = False,
+        model: Optional[str] = None,
     ) -> GenResult:
         """Text generation. Runs the blocking SDK call in a thread so the async
-        event loop (FastAPI/SSE) is never blocked while a slow retry sleeps."""
+        event loop (FastAPI/SSE) is never blocked while a slow retry sleeps.
+        `model` overrides the default (used for the Gemini Pro RCA tier)."""
         return await asyncio.to_thread(
-            self._generate_sync, prompt, system, temperature, response_json
+            self._generate_sync, prompt, system, temperature, response_json, model
         )
 
     async def generate_json(

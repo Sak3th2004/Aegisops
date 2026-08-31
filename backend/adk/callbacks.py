@@ -40,8 +40,10 @@ def _tokens_of(resp: LlmResponse) -> int:
     return 0
 
 
-def make_callbacks(rc: RunContext, agent_name: str, capture: dict[str, Any]) -> dict:
+def make_callbacks(rc: RunContext, agent_name: str, capture: dict[str, Any],
+                   model_id: str | None = None) -> dict:
     """Build the before/after model + tool callbacks for one LlmAgent."""
+    model_label = model_id or _MODEL_ID
     # Per-agent stack of model-call start times (calls are sequential).
     timing: dict[str, float] = {}
 
@@ -66,7 +68,7 @@ def make_callbacks(rc: RunContext, agent_name: str, capture: dict[str, Any]) -> 
             )
             await rc.emit(
                 "reasoning", agent=agent_name, step="model", text=text,
-                tokens=tokens, latency_ms=latency_ms, attempts=1, model=_MODEL_ID,
+                tokens=tokens, latency_ms=latency_ms, attempts=1, model=model_label,
             )
         return None
 

@@ -18,18 +18,19 @@ from backend.agents.base import RunContext
 from backend.config import get_settings
 
 
-def _model() -> RetryGemini:
-    # Flash for every agent (hard rule); id from config (gemini-3.5-flash).
-    return RetryGemini(model=get_settings().gemini_model)
+def _model(model_id: str | None = None) -> RetryGemini:
+    # Flash by default (all fast agents); the Comms RCA step overrides to Pro.
+    return RetryGemini(model=model_id or get_settings().gemini_model)
 
 
-def _agent(name: str, instruction: str, tools, rc: RunContext, capture: dict[str, Any]) -> LlmAgent:
+def _agent(name: str, instruction: str, tools, rc: RunContext, capture: dict[str, Any],
+           model_id: str | None = None) -> LlmAgent:
     return LlmAgent(
         name=name,
-        model=_model(),
+        model=_model(model_id),
         instruction=instruction,
         tools=tools,
-        **make_callbacks(rc, name, capture),
+        **make_callbacks(rc, name, capture, model_id=model_id),
     )
 
 
@@ -95,14 +96,18 @@ def build_agents(rc: RunContext, capture: dict[str, Any]) -> dict[str, LlmAgent]
         ),
         # Comms writes prose, not JSON, and uses no tools (Slack + ticket are done
         # in the orchestrator so PII scrubbing is guaranteed before egress).
+        # This is the ONE agent on Gemini Pro (deeper RCA reasoning); the other
+        # five stay on Flash for speed/cost. Retry still wraps the Pro calls.
         "Comms": _agent(
             "Comms",
-            "You are the Comms agent. Using all the incident findings in the "
-            "message, write a clear, honest post-incident RCA in GitHub-flavored "
-            "Markdown with sections: Summary, Impact, Root Cause, Detection & "
-            "Diagnosis, Remediation, Timeline, Follow-ups. If remediation ran in "
-            "simulation, say so. Output the Markdown document ONLY — no code "
-            "fences, no JSON.",
-            [], rc, capture,
+            "You are the Comms agent, writing an executive-grade post-incident "
+            "review. Using all the incident findings in the message, write a "
+            "clear, honest RCA in GitHub-flavored Markdown with sections: "
+            "Summary, Impact, Root Cause (with the mechanism of failure), "
+            "Detection & Diagnosis, Remediation, Timeline, Contributing Factors, "
+            "and Follow-up Action Items (owners + concrete preventions). If "
+            "remediation ran in simulation, say so plainly. Output the Markdown "
+            "document ONLY — no code fences, no JSON.",
+            [], rc, capture, model_id=get_settings().gemini_model_pro,
         ),
     }
