@@ -1,4 +1,4 @@
-"""Fire the demo incident: drop a real alert onto the running AegisOps bus.
+"""Fire the demo incident: drop a real alert onto the running AegisPilot bus.
 
 Usage:
     python scripts/publish_alert.py                 # default checkout-svc SEV1
@@ -19,8 +19,8 @@ DEFAULT_SNAPSHOT = "backend/seed/grafana_checkout_spike.png"
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Publish a demo alert to AegisOps")
-    ap.add_argument("--url", default="http://localhost:8080", help="AegisOps base URL")
+    ap = argparse.ArgumentParser(description="Publish a demo alert to AegisPilot")
+    ap.add_argument("--url", default="http://localhost:8080", help="AegisPilot base URL")
     ap.add_argument("--service", default="checkout-svc")
     ap.add_argument("--alert", default="HighErrorRate")
     ap.add_argument("--error-rate", default="42%")
@@ -78,7 +78,7 @@ def main() -> int:
         print("  Is the backend running?  uvicorn backend.main:app --port 8080", file=sys.stderr)
         return 1
 
-    print("[OK] Alert published to AegisOps event bus:")
+    print("[OK] Alert published to AegisPilot event bus:")
     print(f"    {payload['alert']} on {payload['service']} @ {payload['error_rate']}")
     print(f"  Response: {resp.json()}")
     print("  Watch the war room -- the agents are now working the incident.")

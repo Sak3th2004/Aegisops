@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # ============================================================================
-# AegisOps — single-container image for Cloud Run.
+# AegisPilot — single-container image for Cloud Run.
 # Build context is the repo root:  docker build -f docker/Dockerfile .
 #
 #   Stage 1 (node:20)          builds the React war room  → frontend/dist

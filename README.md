@@ -1,7 +1,7 @@
-# AegisOps — Autonomous SRE On-Call Agent
+# AegisPilot — Autonomous SRE On-Call Agent
 
 > **An autonomous multi-agent SRE that works the entire 3am on-call loop.** When a
-> production alert fires, AegisOps triages it, diagnoses the logs **and reads the
+> production alert fires, AegisPilot triages it, diagnoses the logs **and reads the
 > Grafana dashboard with multimodal Gemini vision**, correlates against recent
 > deploys, recalls similar past incidents, proposes a remediation **gated by human
 > approval**, executes it, auto-writes the RCA, posts to Slack, and files a ticket —

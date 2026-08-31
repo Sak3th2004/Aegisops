@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "AegisOps Incident War Room — autonomous SRE ops console",
+  "description": "AegisPilot Incident War Room — autonomous SRE ops console",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

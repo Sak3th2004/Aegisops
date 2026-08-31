@@ -1,6 +1,6 @@
-# AegisOps — Architecture
+# AegisPilot — Architecture
 
-AegisOps is an autonomous, multi-agent SRE on-call system. An alert enters through
+AegisPilot is an autonomous, multi-agent SRE on-call system. An alert enters through
 **Pub/Sub**, a **Google ADK `Runner`** orchestrates six specialized **`LlmAgent`s** on
 **Vertex AI** (Gemini 3.5 Flash, + Gemini Pro for the RCA), state and the full audit
 trail persist to **Firestore**, and every reasoning step streams over **SSE** to a React
