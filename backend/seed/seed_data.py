@@ -140,12 +140,25 @@ def _registry(model: str) -> list[AgentRegistryEntry]:
     ]
 
 
-def seed_all(storage: StorageService, model: str) -> None:
-    """Idempotent: INSERT OR REPLACE means re-running just refreshes fixtures."""
+def refresh_demo_timeline(storage: StorageService) -> None:
+    """Re-stamp the time-sensitive fixtures relative to NOW.
+
+    The deploys and logs carry timestamps (the culprit deploy is "12 min before
+    the alert"). Because they're seeded once, wall-clock time drifts and the bad
+    deploy would look hours old — collapsing the Correlation confidence. Calling
+    this at the start of every incident keeps the scenario temporally realistic
+    (bad deploy ~12 min ago, logs within the last ~15 min) so confidence stays
+    high and correct. `_deploys()`/`_logs()` recompute offsets from now_ms().
+    """
     for d in _deploys():
         storage.add_deploy(d)
     for lg in _logs():
         storage.add_log(lg)
+
+
+def seed_all(storage: StorageService, model: str) -> None:
+    """Idempotent: INSERT OR REPLACE means re-running just refreshes fixtures."""
+    refresh_demo_timeline(storage)
     for m in _memory():
         storage.add_memory(m)
     for a in _registry(model):
