@@ -25,6 +25,8 @@ def main() -> int:
     ap.add_argument("--alert", default="HighErrorRate")
     ap.add_argument("--error-rate", default="42%")
     ap.add_argument("--snapshot", default=DEFAULT_SNAPSHOT)
+    ap.add_argument("--pubsub", action="store_true",
+                    help="Publish to the real Pub/Sub topic instead of the HTTP endpoint")
     args = ap.parse_args()
 
     payload = {
@@ -33,6 +35,28 @@ def main() -> int:
         "error_rate": args.error_rate,
         "grafana_snapshot": args.snapshot,
     }
+
+    # --- Real Pub/Sub path: publish straight to the topic (proves the cloud
+    #     ingestion path triggers an incident, not the in-process shortcut). ---
+    if args.pubsub:
+        import asyncio
+        import sys as _sys
+        from pathlib import Path as _Path
+
+        _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+        from backend.config import get_settings
+        from backend.models import Alert
+        from backend.services.pubsub_bus import PubSubBus
+
+        s = get_settings()
+        s.apply_google_env()
+        bus = PubSubBus(s.google_cloud_project)
+        bus.ensure()
+        asyncio.run(bus.publish(Alert(**payload)))
+        print("[OK] Alert published to Pub/Sub topic 'incident-alerts':")
+        print(f"    {payload['alert']} on {payload['service']} @ {payload['error_rate']}")
+        print("  The subscriber will trigger the incident. Watch the war room.")
+        return 0
 
     try:
         resp = httpx.post(f"{args.url}/api/alerts", json=payload, timeout=15.0)

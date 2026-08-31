@@ -51,10 +51,25 @@ async def lifespan(app: FastAPI):
         storage = FirestoreStorage(settings.google_cloud_project)
     else:
         storage = SQLiteStorage(settings.db_path)
-    bus = InProcessBus()
+
+    # BACKEND=cloud also swaps the in-process bus for real Pub/Sub.
+    if settings.backend.lower() == "cloud":
+        from backend.services.pubsub_bus import PubSubBus
+
+        bus = PubSubBus(settings.google_cloud_project)
+        bus.ensure()  # idempotent: create topic + subscription; fail loud on auth
+    else:
+        bus = InProcessBus()
     # ------------------------------------------------------------------------
     storage.init_schema()
-    seed_all(storage, settings.gemini_model)
+    # Seed only when empty. Firestore writes are per-doc round-trips (~20s), so
+    # re-seeding every boot would make Cloud Run cold starts crawl; the fixtures
+    # are stable, and the seed_* scripts force a refresh when needed.
+    if not storage.list_agents():
+        seed_all(storage, settings.gemini_model)
+        log.info("seeded fixtures")
+    else:
+        log.info("fixtures already present; skipping seed")
     if not GRAFANA_IMG.exists():
         generate_grafana()
 
@@ -74,9 +89,13 @@ async def lifespan(app: FastAPI):
     app.state.gate = gate
     app.state.orchestrator = orchestrator
 
-    log.info("AegisOps ready. orchestrator=%s  vertex=%s  model=%s  slack=%s",
-             type(orchestrator).__name__, settings.use_vertex, settings.gemini_model, settings.has_slack)
+    log.info("AegisOps ready. orchestrator=%s  backend=%s  vertex=%s  model=%s  slack=%s",
+             type(orchestrator).__name__, settings.backend, settings.use_vertex,
+             settings.gemini_model, settings.has_slack)
     yield
+    # --- shutdown: stop the Pub/Sub streaming pull cleanly (no-op for local) ---
+    if hasattr(bus, "close"):
+        bus.close()
 
 
 app = FastAPI(title="AegisOps", version="1.0.0", lifespan=lifespan)
@@ -93,6 +112,29 @@ async def post_alert(alert: Alert, request: Request):
     """Drop an alert on the event bus (the demo publisher hits this)."""
     await request.app.state.bus.publish(alert)
     return {"accepted": True, "service": alert.service}
+
+
+@app.post("/api/pubsub/push")
+async def pubsub_push(request: Request):
+    """Pub/Sub PUSH endpoint for Cloud Run (Phase 6).
+
+    Pub/Sub POSTs a base64 envelope here; we decode it to an Alert and run the
+    orchestrator directly. Returns 204 to ack; a non-2xx makes Pub/Sub retry.
+    """
+    import base64
+    import json as _json
+
+    envelope = await request.json()
+    msg = (envelope or {}).get("message", {})
+    raw = msg.get("data")
+    if not raw:
+        raise HTTPException(400, "no message data")
+    alert = Alert(**_json.loads(base64.b64decode(raw).decode("utf-8")))
+    # Fire-and-forget so we ack Pub/Sub promptly while the incident runs.
+    asyncio.create_task(request.app.state.orchestrator.handle_alert(alert))
+    from fastapi import Response
+
+    return Response(status_code=204)
 
 
 # --------------------------------------------------------------------------- #
