@@ -33,6 +33,13 @@ Built for **#AllThingsAgenticHackathon** (The Taskmaster track) on real Google C
 - **Cloud-portable by design.** `StorageService` and `EventBus` interfaces let the same
   code run locally (SQLite + in-process bus) or on GCP (Firestore + Pub/Sub) by flipping
   one env var. Both implementations are kept in the repo.
+- **Interactive & self-improving.** The war room's **Fire Incident** button rotates three
+  real scenarios (checkout 5xx · cart OOM · payments latency), each with its own deploys,
+  logs, memory, and Grafana snapshot. **Custom** lets anyone submit *their own* incident —
+  service, error rate, pasted log lines, an optional recent deploy, even a dashboard
+  screenshot for the vision agent. And **closed-loop learning**: every resolved incident is
+  written back to memory, so a recurring fingerprint is instantly recalled ("seen before,
+  resolved via rollback") — the system gets smarter the more it's used.
 
 ---
 
@@ -133,16 +140,30 @@ uvicorn backend.main:app --port 8080
 cd frontend && npm install && npm run dev   # war room at http://localhost:5173
 ```
 
-### Fire the demo incident
+### Fire an incident
+
+From the **war room UI** (recommended): click **Fire Incident** to run the next rotating
+scenario, or **Custom** to submit your own. From the CLI:
 
 ```bash
-python scripts/publish_alert.py             # via HTTP  →  /api/alerts
-python scripts/publish_alert.py --pubsub    # via REAL Pub/Sub  →  push  →  orchestrator
+python scripts/publish_alert.py --pubsub                 # rotating scenario via real Pub/Sub → push
+python scripts/publish_alert.py --scenario cart --pubsub # force one: checkout | cart | payments
+python scripts/publish_alert.py                          # via HTTP → /api/alerts
+```
+
+Bring your own incident (the agents process exactly your data — nothing random):
+
+```bash
+curl -X POST "$URL/api/incidents/custom" \
+  -F service=auth-svc -F alert=HighErrorRate -F error_rate=23% \
+  -F deploy_version=v3.2.0 -F rollback_target=v3.1.9 \
+  -F $'logs=ERROR JWT validation failed: signature mismatch after key rotation\nWARN auth error rate 23% exceeds SLO 2%' \
+  # optional: -F image=@your_dashboard.png   (read by Gemini vision)
 ```
 
 Then watch the war room: the six agents activate one by one, reasoning streams live,
 Diagnosis reads the Grafana image, Remediation halts for your **Approve**, and on approval
-it resolves, writes the RCA, posts to Slack, and files a ticket.
+it resolves, writes the RCA (Gemini Pro), posts to Slack, and files a ticket.
 
 ### The demo flow (end to end)
 

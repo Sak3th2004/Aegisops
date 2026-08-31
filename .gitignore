@@ -31,3 +31,6 @@ Thumbs.db
 tickets/
 .venv/server.log
 .venv/adk_install.log
+
+# Private working context doc (not for the repo)
+AegisOps_PROJECT_CONTEXT.md
