@@ -34,3 +34,13 @@ tickets/
 
 # Private working context doc (not for the repo)
 AegisOps_PROJECT_CONTEXT.md
+
+# --- Internal / reference docs (kept locally, NOT published to GitHub) ---
+AegisOps_MASTER_SPEC_FREE.md
+AegisOps_UPGRADE_TO_GCP.md
+AegisOps_DEMO_SCRIPT.md
+CONTRACT.md
+.claude/
+
+# --- TypeScript incremental build artifacts ---
+*.tsbuildinfo
