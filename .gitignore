@@ -32,15 +32,17 @@ tickets/
 .venv/server.log
 .venv/adk_install.log
 
-# Private working context doc (not for the repo)
-AegisPilot_PROJECT_CONTEXT.md
+# --- TypeScript incremental build artifacts ---
+*.tsbuildinfo
 
-# --- Internal / reference docs (kept locally, NOT published to GitHub) ---
+# Private working context / Claude prompt specs (not for the public repo)
+AegisOps_PROJECT_CONTEXT.md
+AegisOps_MASTER_SPEC_FREE.md
+AegisOps_UPGRADE_TO_GCP.md
+AegisOps_DEMO_SCRIPT.md
+AegisPilot_PROJECT_CONTEXT.md
 AegisPilot_MASTER_SPEC_FREE.md
 AegisPilot_UPGRADE_TO_GCP.md
 AegisPilot_DEMO_SCRIPT.md
 CONTRACT.md
 .claude/
-
-# --- TypeScript incremental build artifacts ---
-*.tsbuildinfo
